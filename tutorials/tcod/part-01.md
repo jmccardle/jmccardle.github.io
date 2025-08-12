@@ -146,70 +146,139 @@ This part gives us a way to gracefully exit (i.e. not crashing) the program by h
 
 Alright, our "@" symbol is successfully displayed on the screen, but we can't rest just yet. We still need to get it moving around\!
 
-We need to keep track of the player's position at all times. Since this is a 2D game, we can express this in two data points: the `x` and `y` coordinates. Let's create two variables, `player_x` and `player_y`, to keep track of this.
+We need to keep track of the player's position at all times. Since this is a 2D game, we can express this in two data points: the `x` and `y` coordinates. While we could use simple variables for this, let's set up a more extensible structure that will serve us well as we add more features. We'll create an `Entity` class to represent our player (and eventually, monsters and items), and an `Engine` class to manage our game state.
 
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-    ...
-    screen_height = 50
-+
-+   player_x = int(screen_width / 2)
-+   player_y = int(screen_height / 2)
-+
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
-    ...
+First, let's organize our project better. Create a new directory called `game` in your project folder, and add an empty file called `__init__.py` inside it. This tells Python that `game` is a package we can import from.
+
+Now, let's create our Entity and Engine classes. Create a new file called `entity.py` inside the `game` directory:
+
+{{< highlight py3 >}}
+from typing import Tuple
+
+
+class Entity:
+    """
+    A generic object to represent players, enemies, items, etc.
+    """
+
+    def __init__(self, x: int, y: int, char: str, color: Tuple[int, int, int]):
+        self.x = x
+        self.y = y
+        self.char = char
+        self.color = color
+
+    def move(self, dx: int, dy: int) -> None:
+        # Move the entity by a given amount
+        self.x += dx
+        self.y += dy
 {{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>    ...
-    screen_height = 50
-    <span class="new-text">
-    player_x = int(screen_width / 2)
-    player_y = int(screen_height / 2)
-    </span>
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
-    ...</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
 
-*Note: Ellipses denote omitted parts of the code. I'll include lines around the code to be inserted so that you'll know exactly where to put new pieces of code, but I won't be showing the entire file every time. The green lines denote code that you should be adding.*
+This `Entity` class will represent anything that exists in our game world. For now it just tracks position, appearance, and can move itself. This structure will make it easy to add enemies, items, and other objects later.
 
-We're placing the player right in the middle of the screen. What's with the `int()` function though? Well, Python 3 doesn't automatically
-truncate division like Python 2 does, so we have to cast the division result (a float) to an integer. If we don't, tcod will give an error.
+Next, create `engine.py` in the `game` directory:
 
-*Note: It's been pointed out that you could divide with `//` instead of `/` and achieve the same effect. This is true, except in cases where, for whatever reason, one of the numbers given is a decimal. For example, `screen_width // 2.0` will give an error. That shouldn't happen in this case, but wrapping the function in `int()` gives us certainty that this won't ever happen.*
+{{< highlight py3 >}}
+from __future__ import annotations
 
-We also have to modify the command to put the '@' symbol to use these new coordinates.
+import tcod
+
+from game.entity import Entity
+
+
+class Engine:
+    def __init__(self, player: Entity):
+        self.player = player
+
+    def render(self, console: tcod.console.Console) -> None:
+        console.print(x=self.player.x, y=self.player.y, string=self.player.char, fg=self.player.color)
+{{</ highlight >}}
+
+The `Engine` class will manage our game state. Right now it just holds a reference to the player and knows how to render entities, but it will grow to handle much more as we develop our game.
+
+Now let's update our main.py to use these new classes:
 
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-        ...
+#!/usr/bin/env python3
+import tcod
+
++from game.engine import Engine
++from game.entity import Entity
+
+
+def main() -> None:
+    screen_width = 80
+    screen_height = 50
+
+    tileset = tcod.tileset.load_tilesheet(
+        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
+    )
+
++   player = Entity(x=int(screen_width / 2), y=int(screen_height / 2), char="@", color=(255, 255, 255))
++
++   engine = Engine(player=player)
+
+    with tcod.context.new_terminal(
+        screen_width,
+        screen_height,
+        tileset=tileset,
+        title="Yet Another Roguelike Tutorial",
+        vsync=True,
+    ) as context:
+        root_console = tcod.Console(screen_width, screen_height, order="F")
         while True:
 -           root_console.print(x=1, y=1, string="@")
-+           root_console.print(x=player_x, y=player_y, string="@")
++           engine.render(root_console)
 
             context.present(root_console)
-            ...
+
+            for event in tcod.event.wait():
+                if event.type == "QUIT":
+                    raise SystemExit()
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>        ...
+<pre>#!/usr/bin/env python3
+import tcod
+
+<span class="new-text">from game.engine import Engine
+from game.entity import Entity</span>
+
+
+def main() -> None:
+    screen_width = 80
+    screen_height = 50
+
+    tileset = tcod.tileset.load_tilesheet(
+        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
+    )
+
+    <span class="new-text">player = Entity(x=int(screen_width / 2), y=int(screen_height / 2), char="@", color=(255, 255, 255))
+
+    engine = Engine(player=player)</span>
+
+    with tcod.context.new_terminal(
+        screen_width,
+        screen_height,
+        tileset=tileset,
+        title="Yet Another Roguelike Tutorial",
+        vsync=True,
+    ) as context:
+        root_console = tcod.Console(screen_width, screen_height, order="F")
         while True:
             <span class="crossed-out-text">root_console.print(x=1, y=1, string="@")</span>
-            <span class="new-text">root_console.print(x=player_x, y=player_y, string="@")</span>
+            <span class="new-text">engine.render(root_console)</span>
 
             context.present(root_console)
-            ...</pre>
+
+            for event in tcod.event.wait():
+                if event.type == "QUIT":
+                    raise SystemExit()</pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
-*Note: The red lines denote code that has been removed.*
+We're creating a player `Entity` positioned in the middle of the screen, with the "@" character and white color. The `Engine` manages our game state and handles rendering. Notice how `engine.render()` now takes care of drawing our player - this separation of concerns will make our code much easier to extend.
 
 Run the code now and you should see the '@' in the center of the screen. Let's take care of moving it around now.
 
@@ -225,137 +294,242 @@ We *could* identify which key is being pressed right here in `main.py`, but this
 
 To handle the keyboard inputs and the actions associated with them, let's actually create *two* new files. One will hold the different types of "actions" our rogue can perform, and the other will bridge the gap between the keys we press and those actions.
 
-Create two new Python files in your project's directory, one called `input_handlers.py`, and the other called `actions.py`. Let's fill out `actions.py` first:
+Create `actions.py` inside the `game` directory:
 
 {{< highlight py3 >}}
+from __future__ import annotations
+
+from game.engine import Engine
+from game.entity import Entity
+
+
 class Action:
-    pass
+    def __init__(self, entity: Entity) -> None:
+        super().__init__()
+        self.entity = entity
+
+    @property
+    def engine(self) -> Engine:
+        """Return the engine this action belongs to."""
+        # In Part 1, we don't have gamemap yet, so we'll need a different approach
+        # This will be refactored in Part 2 when we add GameMap
+        raise NotImplementedError()
+
+    def perform(self, engine: Engine) -> None:
+        """Perform this action with the objects needed to determine its scope.
+
+        This method must be overridden by Action subclasses.
+        """
+        raise NotImplementedError()
 
 
 class EscapeAction(Action):
-    pass
+    def perform(self, engine: Engine) -> None:
+        raise SystemExit()
 
 
-class MovementAction(Action):
-    def __init__(self, dx: int, dy: int):
-        super().__init__()
+class ActionWithDirection(Action):
+    def __init__(self, entity: Entity, dx: int, dy: int):
+        super().__init__(entity)
 
         self.dx = dx
         self.dy = dy
+
+    def perform(self, engine: Engine) -> None:
+        raise NotImplementedError()
+
+
+class MovementAction(ActionWithDirection):
+    def perform(self, engine: Engine) -> None:
+        dest_x = self.entity.x + self.dx
+        dest_y = self.entity.y + self.dy
+
+        # Check boundaries (hardcoded for Part 1, will be improved later)
+        if 0 <= dest_x < 80 and 0 <= dest_y < 50:
+            self.entity.move(self.dx, self.dy)
 {{</ highlight >}}
 
-We define three classes: `Action`, `EscapeAction`, and `MovementAction`. `EscapeAction` and `MovementAction` are subclasses of `Action`.
+We define our action classes: `Action`, `EscapeAction`, and `MovementAction`. Notice that actions now take an `entity` parameter - this tells us which entity is performing the action. This will become important when we have multiple entities like monsters.
 
-So what's the plan for these classes? Basically, whenever we have an "action", we'll use one of the subclasses of `Action` to describe it. We'll be able to detect which subclass we're using, and respond accordingly. In this case, `EscapeAction` will be when we hit the `Esc` key (to exit the game), and `MovementAction` will be used to describe our player moving around.
+The `perform` method is where the action actually happens. `MovementAction` calculates where the entity wants to move and checks if it's within the screen boundaries before moving. This boundary checking is temporary - we'll have proper map boundaries in the next part.
 
-There might be instances where we need to know more than just the "type" of action, like in the case of `MovementAction`. There, we need to know not only that we're trying to move, but in which direction. Therefore, we can pass the `dx` and `dy` arguments to `MovementAction`, which will tell us where the player is trying to move to. Other `Action` subclasses might contain additional data as well, and others might just be subclasses with nothing else in them, like `EscapeAction`.
+We also introduce `ActionWithDirection` as a base class for any action that involves a direction. This organization will help us add more directional actions later (like attacking).
 
-That's all we need to do in `actions.py` right now. Let's fill out `input_handlers.py`, which will use the `Action` class and subclasses we just created:
+That's all we need to do in `actions.py` right now. Now create `input_handlers.py` in the `game` directory:
 
 {{< highlight py3 >}}
-from typing import Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional, Union
 
 import tcod.event
 
-from actions import Action, EscapeAction, MovementAction
+from game.actions import Action, EscapeAction, MovementAction
+
+if TYPE_CHECKING:
+    import game.engine
+
+# This type will help us handle both actions and state changes
+ActionOrHandler = Union[Action, "BaseEventHandler"]
+"""An event handler return value which can trigger an action or switch active handlers.
+
+If a handler is returned then it will become the active handler for future events.
+If an action is returned it will be attempted and if it's valid then
+MainGameEventHandler will become the active handler.
+"""
 
 
-class EventHandler(tcod.event.EventDispatch[Action]):
+MOVE_KEYS = {
+    # Arrow keys.
+    tcod.event.KeySym.UP: (0, -1),
+    tcod.event.KeySym.DOWN: (0, 1),
+    tcod.event.KeySym.LEFT: (-1, 0),
+    tcod.event.KeySym.RIGHT: (1, 0),
+    tcod.event.KeySym.HOME: (-1, -1),
+    tcod.event.KeySym.END: (-1, 1),
+    tcod.event.KeySym.PAGEUP: (1, -1),
+    tcod.event.KeySym.PAGEDOWN: (1, 1),
+    # Numpad keys.
+    tcod.event.KeySym.KP_1: (-1, 1),
+    tcod.event.KeySym.KP_2: (0, 1),
+    tcod.event.KeySym.KP_3: (1, 1),
+    tcod.event.KeySym.KP_4: (-1, 0),
+    tcod.event.KeySym.KP_6: (1, 0),
+    tcod.event.KeySym.KP_7: (-1, -1),
+    tcod.event.KeySym.KP_8: (0, -1),
+    tcod.event.KeySym.KP_9: (1, -1),
+    # Vi keys.
+    tcod.event.KeySym.h: (-1, 0),
+    tcod.event.KeySym.j: (0, 1),
+    tcod.event.KeySym.k: (0, -1),
+    tcod.event.KeySym.l: (1, 0),
+    tcod.event.KeySym.y: (-1, -1),
+    tcod.event.KeySym.u: (1, -1),
+    tcod.event.KeySym.b: (-1, 1),
+    tcod.event.KeySym.n: (1, 1),
+}
+
+
+class BaseEventHandler(tcod.event.EventDispatch[ActionOrHandler]):
+    def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
+        """Handle an event and return the next active event handler."""
+        state = self.dispatch(event)
+        if isinstance(state, BaseEventHandler):
+            return state
+        assert not isinstance(state, Action), f"{self!r} can not handle actions."
+        return self
+
+    def on_render(self, console: tcod.console.Console) -> None:
+        raise NotImplementedError()
+
     def ev_quit(self, event: tcod.event.Quit) -> Optional[Action]:
         raise SystemExit()
 
-    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[Action]:
+
+class EventHandler(BaseEventHandler):
+    def __init__(self, engine: game.engine.Engine):
+        self.engine = engine
+
+    def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
+        """Handle events for input handlers with an engine."""
+        action_or_state = self.dispatch(event)
+        if isinstance(action_or_state, BaseEventHandler):
+            return action_or_state
+        if self.handle_action(action_or_state):
+            # A valid action was performed.
+            return MainGameEventHandler(self.engine)  # Return to the main handler.
+        return self
+
+    def handle_action(self, action: Optional[Action]) -> bool:
+        """Handle actions returned from event methods.
+
+        Returns True if the action will advance a turn.
+        """
+        if action is None:
+            return False
+
+        action.perform(self.engine)
+        return True
+
+    def on_render(self, console: tcod.console.Console) -> None:
+        self.engine.render(console)
+
+
+class MainGameEventHandler(EventHandler):
+    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
         action: Optional[Action] = None
 
         key = event.sym
 
-        if key == tcod.event.K_UP:
-            action = MovementAction(dx=0, dy=-1)
-        elif key == tcod.event.K_DOWN:
-            action = MovementAction(dx=0, dy=1)
-        elif key == tcod.event.K_LEFT:
-            action = MovementAction(dx=-1, dy=0)
-        elif key == tcod.event.K_RIGHT:
-            action = MovementAction(dx=1, dy=0)
+        player = self.engine.player
 
-        elif key == tcod.event.K_ESCAPE:
-            action = EscapeAction()
+        if key in MOVE_KEYS:
+            dx, dy = MOVE_KEYS[key]
+            action = MovementAction(player, dx, dy)
+
+        elif key == tcod.event.KeySym.ESCAPE:
+            action = EscapeAction(player)
 
         # No valid key was pressed
         return action
-
 {{</ highlight >}}
 
-Let's go over what we've added.
+This is a more sophisticated event handling system than you might expect for Part 1, but it sets us up for success later. Let's break down the key concepts:
 
 {{< highlight py3 >}}
-from typing import Optional
+ActionOrHandler = Union[Action, "BaseEventHandler"]
 {{</ highlight >}}
 
-This is part of Python's type hinting system (which you don't have to include in your project). `Optional` denotes something that could be set to `None`.
+This type definition is crucial for our architecture. Event handlers can return either an `Action` (something to do) or another `BaseEventHandler` (a state change, like opening a menu). This flexibility will become essential when we add menus and other game states.
 
 {{< highlight py3 >}}
-import tcod.event
-
-from actions import Action, EscapeAction, MovementAction
+MOVE_KEYS = {
+    # Arrow keys.
+    tcod.event.KeySym.UP: (0, -1),
+    tcod.event.KeySym.DOWN: (0, 1),
+    ...
+}
 {{</ highlight >}}
 
-We're importing `tcod.event` so that we can use tcod's event system. We don't need to import `tcod`, as we only need the contents of `event`.
-
-The next line imports the `Action` class and its subclasses that we just created.
+We define movement keys in a dictionary for cleaner code. This includes arrow keys, numpad, and even vi keys for hardcore roguelike fans. Each key maps to a (dx, dy) tuple representing the movement direction.
 
 {{< highlight py3 >}}
-class EventHandler(tcod.event.EventDispatch[Action]):
+class BaseEventHandler(tcod.event.EventDispatch[ActionOrHandler]):
+    def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
+        """Handle an event and return the next active event handler."""
+        state = self.dispatch(event)
+        if isinstance(state, BaseEventHandler):
+            return state
+        assert not isinstance(state, Action), f"{self!r} can not handle actions."
+        return self
 {{</ highlight >}}
 
-We're creating a class called `EventHandler`, which is a subclass of tcod's `EventDispatch` class. `EventDispatch` is a class that allows us to send an event to its proper method based on what type of event it is. Let's take a look at the methods we're creating for `EventHandler` to see a few examples of this.
+`BaseEventHandler` is our foundation for all event handlers. The `handle_events` method is key - it returns the next active handler, allowing us to switch between different game states (gameplay, menus, etc.) just by returning a different handler.
 
 {{< highlight py3 >}}
-    def ev_quit(self, event: tcod.event.Quit) -> Optional[Action]:
-        raise SystemExit()
+class EventHandler(BaseEventHandler):
+    def __init__(self, engine: game.engine.Engine):
+        self.engine = engine
 {{</ highlight >}}
 
-Here's an example of us using a method of `EventDispatch`: `ev_quit` is a method defined in `EventDispatch`, which we're overriding in `EventHandler`. `ev_quit` is called when we receive a "quit" event, which happens when we click the "X" in the window of the program. In that case, we want to quit the program, so we raise `SystemExit()` to do so.
+`EventHandler` adds engine awareness to the base handler. It knows how to handle actions by calling their `perform` method.
 
 {{< highlight py3 >}}
-    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[Action]:
-{{</ highlight >}}
-
-This method will receive key press events, and return either an `Action` subclass, or `None`, if no valid key was pressed.
-
-{{< highlight py3 >}}
+class MainGameEventHandler(EventHandler):
+    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
         action: Optional[Action] = None
 
         key = event.sym
+        player = self.engine.player
+
+        if key in MOVE_KEYS:
+            dx, dy = MOVE_KEYS[key]
+            action = MovementAction(player, dx, dy)
 {{</ highlight >}}
 
-`action` is the variable that will hold whatever subclass of `Action` we end up assigning it to. If no valid key press is found, it will remain set to `None`. We'll return it either way.
+`MainGameEventHandler` is our actual gameplay handler. Notice how it gets the player from the engine and creates actions with that player entity. This keeps our actions tied to the entity that performs them.
 
-`key` holds the actual key we pressed. It doesn't contain additional information about modifiers like `Shift` or `Alt`, just the actual key that was pressed. That's all we need right now.
-
-From there, we go down a list of possible keys pressed. For example:
-
-{{< highlight py3 >}}
-        if key == tcod.event.K_UP:
-            action = MovementAction(dx=0, dy=-1)
-{{</ highlight >}}
-
-In this case, the user pressed the up-arrow key, so we're creating a `MovementAction`. Notice that here (and in all the other cases of `MovementAction`) we provide `dx` and `dy`. These describe which direction our character will move in.
-
-{{< highlight py3 >}}
-        elif key == tcod.event.K_ESCAPE:
-            action = EscapeAction()
-{{</ highlight >}}
-
-If the user pressed the "Escape" key, we return `EscapeAction`. We'll use this to exit the game for now, though in the future, `EscapeAction` can be used to do things like exit menus.
-
-{{< highlight py3 >}}
-        return action
-{{< /highlight >}}
-
-Whether `action` is assigned to an `Action` subclass or `None`, we return it.
-
-Let's put our new actions and input handlers to use in `main.py`. Edit `main.py` like this:
+Let's put our new actions and input handlers to use in `main.py`. Here's the complete updated version:
 
 {{< codetab >}}
 {{< diff-tab >}}
@@ -363,42 +537,53 @@ Let's put our new actions and input handlers to use in `main.py`. Edit `main.py`
 #!/usr/bin/env python3
 import tcod
 
-+from actions import EscapeAction, MovementAction
-+from input_handlers import EventHandler
++from game.engine import Engine
++from game.entity import Entity
++from game.input_handlers import BaseEventHandler, MainGameEventHandler
 
 
 def main() -> None:
     screen_width = 80
     screen_height = 50
 
-    player_x = int(screen_width / 2)
-    player_y = int(screen_height / 2)
+-   tileset = tcod.tileset.load_tilesheet(
+-       "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
+-   )
++   tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
 
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
++   player = Entity(x=int(screen_width / 2), y=int(screen_height / 2), char="@", color=(255, 255, 255))
++
++   engine = Engine(player=player)
++
++   handler: BaseEventHandler = MainGameEventHandler(engine)
 
-+   event_handler = EventHandler()
+-   with tcod.context.new_terminal(
++   with tcod.context.new(
+-       screen_width,
+-       screen_height,
++       columns=screen_width,
++       rows=screen_height,
+        tileset=tileset,
+        title="Yet Another Roguelike Tutorial",
+        vsync=True,
+    ) as context:
+-       root_console = tcod.Console(screen_width, screen_height, order="F")
++       root_console = tcod.console.Console(screen_width, screen_height, order="F")
+        while True:
+-           root_console.print(x=1, y=1, string="@")
+-
+-           context.present(root_console)
+-
+-           root_console.clear()
++           root_console.clear()
++           handler.on_render(console=root_console)
++           context.present(root_console)
 
-    with tcod.context.new_terminal(
-        ...
-
-            ...
             for event in tcod.event.wait():
 -               if event.type == "QUIT":
 -                   raise SystemExit()
-
-+               action = event_handler.dispatch(event)
-
-+               if action is None:
-+                   continue
-
-+               if isinstance(action, MovementAction):
-+                   player_x += action.dx
-+                   player_y += action.dy
-
-+               elif isinstance(action, EscapeAction):
-+                   raise SystemExit()
++               event = context.convert_event(event)
++               handler = handler.handle_events(event)
 
 
 if __name__ == "__main__":
@@ -409,42 +594,53 @@ if __name__ == "__main__":
 <pre>#!/usr/bin/env python3
 import tcod
 
-<span class="new-text">from actions import EscapeAction, MovementAction
-from input_handlers import EventHandler</span>
+<span class="new-text">from game.engine import Engine
+from game.entity import Entity
+from game.input_handlers import BaseEventHandler, MainGameEventHandler</span>
 
 
 def main() -> None:
     screen_width = 80
     screen_height = 50
 
-    player_x = int(screen_width / 2)
-    player_y = int(screen_height / 2)
+    <span class="crossed-out-text">tileset = tcod.tileset.load_tilesheet(</span>
+        <span class="crossed-out-text">"dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD</span>
+    <span class="crossed-out-text">)</span>
+    <span class="new-text">tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)</span>
 
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
+    <span class="new-text">player = Entity(x=int(screen_width / 2), y=int(screen_height / 2), char="@", color=(255, 255, 255))
 
-    <span class="new-text">event_handler = EventHandler()</span>
+    engine = Engine(player=player)
 
-    with tcod.context.new_terminal(
-        ...
+    handler: BaseEventHandler = MainGameEventHandler(engine)</span>
 
-            ...
+    <span class="crossed-out-text">with tcod.context.new_terminal(</span>
+        <span class="crossed-out-text">screen_width,</span>
+        <span class="crossed-out-text">screen_height,</span>
+    <span class="new-text">with tcod.context.new(
+        columns=screen_width,
+        rows=screen_height,</span>
+        tileset=tileset,
+        title="Yet Another Roguelike Tutorial",
+        vsync=True,
+    ) as context:
+        <span class="crossed-out-text">root_console = tcod.Console(screen_width, screen_height, order="F")</span>
+        <span class="new-text">root_console = tcod.console.Console(screen_width, screen_height, order="F")</span>
+        while True:
+            <span class="crossed-out-text">root_console.print(x=1, y=1, string="@")</span>
+            <span class="crossed-out-text"></span>
+            <span class="crossed-out-text">context.present(root_console)</span>
+            <span class="crossed-out-text"></span>
+            <span class="crossed-out-text">root_console.clear()</span>
+            <span class="new-text">root_console.clear()
+            handler.on_render(console=root_console)
+            context.present(root_console)</span>
+
             for event in tcod.event.wait():
                 <span class="crossed-out-text">if event.type == "QUIT":</span>
                     <span class="crossed-out-text">raise SystemExit()</span>
-                <span class="new-text">
-                action = event_handler.dispatch(event)
-
-                if action is None:
-                    continue
-
-                if isinstance(action, MovementAction):
-                    player_x += action.dx
-                    player_y += action.dy
-
-                elif isinstance(action, EscapeAction):
-                    raise SystemExit()</span>
+                <span class="new-text">event = context.convert_event(event)
+                handler = handler.handle_events(event)</span>
 
 
 if __name__ == "__main__":
@@ -452,97 +648,53 @@ if __name__ == "__main__":
 {{</ original-tab >}}
 {{</ codetab >}}
 
-Let's break down the new additions a bit.
+Let's break down the key changes:
 
 {{< highlight py3 >}}
-from actions import EscapeAction, MovementAction
-from input_handlers import EventHandler
+tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
 {{</ highlight >}}
 
-We're importing the `EscapeAction` and `MovementAction` from `actions`, and `EventHandler` from `input_handlers`. This allows us to use the functions we wrote in those files in our `main` file.
+Note that we're now loading the tileset from a `data/` directory. Create this directory in your project folder and move the `dejavu10x10_gs_tc.png` file into it. This keeps our project organized.
 
 {{< highlight py3 >}}
-    event_handler = EventHandler()
+handler: BaseEventHandler = MainGameEventHandler(engine)
 {{</ highlight >}}
 
-`event_handler` is an instance of our `EventHandler` class. We'll use it to receive events and process them.
+We create our event handler with a reference to the engine. The handler tracks the current game state and will allow us to switch between different states (like menus) later.
 
 {{< highlight py3 >}}
-                action = event_handler.dispatch(event)
+with tcod.context.new(
+    columns=screen_width,
+    rows=screen_height,
 {{</ highlight >}}
 
-We send the `event` to our `event_handler`'s "dispatch" method, which sends the event to its proper place. In this case, a keyboard event will be sent to the `ev_keydown` method we wrote. The `Action` returned from that method is assigned to our local `action` variable.
+We're using `tcod.context.new()` instead of `new_terminal()`, with `columns` and `rows` parameters. This is the more modern TCOD API.
 
 {{< highlight py3 >}}
-                if action is None:
-                    continue
+root_console.clear()
+handler.on_render(console=root_console)
+context.present(root_console)
 {{</ highlight >}}
 
-This is pretty straightforward: If `action` is `None` (that is, no key was pressed, or the key pressed isn't recognized), then we skip over the rest the loop. There's no need to go any further, since the lines below are going to handle the valid key presses.
+Notice the order here: we clear first, then render, then present. This prevents the "snake trail" effect. The handler's `on_render` method delegates to the engine, which draws our entities.
 
 {{< highlight py3 >}}
-                if isinstance(action, MovementAction):
-                    player_x += action.dx
-                    player_y += action.dy
+event = context.convert_event(event)
+handler = handler.handle_events(event)
 {{</ highlight >}}
 
-Now we arrive at the interesting part. If the `action` is an instance of the class `MovementAction`, we need to move our "@" symbol. We grab the `dx` and `dy` values we gave to `MovementAction` earlier, which will move the "@" symbol in which direction we want it to move. `dx` and `dy`, as of now, will only ever be -1, 0, or 1. Regardless of what the value is, we add `dx` and `dy` to `player_x` and `player_y`, respectively. Because the console is using `player_x` and `player_y` to draw where our "@" symbol is, modifying these two variables will cause the symbol to move.
-
-{{< highlight py3 >}}
-                elif isinstance(action, EscapeAction):
-                    raise SystemExit()
-{{</ highlight>}}
-
-`raise SystemExit()` should look familiar: it's how we're quitting out of the program. So basically, if the user hits the `Esc` key, our program should exit.
+This is the magic of our handler system. `convert_event` ensures the event is in the right format. `handle_events` processes the event and returns the next active handler. If the handler changes (like opening a menu), we'll automatically use the new one for the next event. For now, it always returns itself, but this architecture will shine when we add menus and other game states.
 
 With all that done, let's run the program and see what happens!
 
-Indeed, our "@" symbol does move, but... it's perhaps not what was expected.
-
-![Snake the Roguelike?](images/snake_the_roguelike.png "Snake the Roguelike?")
-
-Unless you're making a roguelike version of "Snake" (and who knows, maybe you are), we need to fix the "@" symbol being left behind wherever we move. So why is this happening in the first place?
-
-Turns out, we need to "clear" the console after we've drawn it, or we'll get these leftovers when we draw symbols in their new places. Luckily, this is as easy as adding one line:
-
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-    ...
-        while True:
-            root_console.print(x=player_x, y=player_y, string="@")
-
-            context.present(root_console)
-
-+           root_console.clear()
-
-            for event in tcod.event.wait():
-                ...
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>    ...
-        while True:
-            root_console.print(x=player_x, y=player_y, string="@")
-
-            context.present(root_console)
-
-            <span class="new-text">root_console.clear()</span>
-
-            for event in tcod.event.wait():
-                ...</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-That's it! Run the project now, and the "@" symbol will move around, without leaving traces of itself behind.
+Run the project now, and the "@" symbol will move around cleanly. You can use the arrow keys, numpad, or even vi keys (h,j,k,l) to move. Press Escape to exit.
 
 That wraps up part one of this tutorial\! If you're using git or some
 other form of version control (and I recommend you do), commit your
 changes now.
 
 If you want to see the code so far in its entirety, [click
-here](https://github.com/TStand90/tcod_tutorial_v2/tree/2020/part-1).
+here](https://github.com/jmccardle/tcod_tutorial_v2/tree/part-1).
 
 [Click here to move on to the next part of this
-tutorial.](/tutorials/tcod/v2/part-2)
+tutorial.](/tutorials/tcod/part-2)

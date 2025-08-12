@@ -119,3 +119,4 @@ Use todo lists to track:
 - Focus on code hygiene and extensibility benefits
 - These changes prevent the "great refactoring wall" typically hit in parts 8-10
 - The goal is seamless integration - readers shouldn't realize it's been refactored
+- you may check out the exact commit for the tutorial part we're editing in the code repo: tcod_tutorial_fixes/tcod_tutorial_v2 for exact reference of how the code looks at each step. Checkout 'master' to go to part 13, and see `git log --oneline` for the commit IDs of the previous parts.
