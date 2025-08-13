@@ -5,34 +5,54 @@ draft: false
 ---
 
 Now that we can move our little '@' symbol around, we need to give it
-something to move around *in*. But before that, let's stop for a moment
-and think about the player object itself.
+something to move around *in*. We already have our `Entity` class from Part 1,
+but we need to enhance it to work with a proper game map.
 
-Right now, we just represent the player with the '@' symbol, and its x
-and y coordinates. Shouldn't we tie those things together in an object,
-along with some other data and functions that pertain to it?
-
-Let's create a generic class to represent not just the player, but just
-about *everything* in our game world. Enemies, items, and whatever other
-foreign entities we can dream of will be part of this class, which we'll
-call `Entity`.
-
-Create a new file, and call it `entity.py`. In that file, put the
-following class:
+First, let's update our `Entity` class to support being placed on a map and
+interacting with other entities. Update `game/entity.py`:
 
 {{< highlight py3 >}}
-from typing import Tuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional, Tuple
+
+if TYPE_CHECKING:
+    import game.game_map
 
 
 class Entity:
     """
     A generic object to represent players, enemies, items, etc.
     """
-    def __init__(self, x: int, y: int, char: str, color: Tuple[int, int, int]):
+
+    gamemap: game.game_map.GameMap
+
+    def __init__(
+        self,
+        gamemap: Optional[game.game_map.GameMap] = None,
+        x: int = 0,
+        y: int = 0,
+        char: str = "?",
+        color: Tuple[int, int, int] = (255, 255, 255),
+    ):
         self.x = x
         self.y = y
         self.char = char
         self.color = color
+        if gamemap:
+            # If gamemap isn't provided now then it will be set later.
+            self.gamemap = gamemap
+            gamemap.entities.add(self)
+
+    def place(self, x: int, y: int, gamemap: Optional[game.game_map.GameMap] = None) -> None:
+        """Place this entity at a new location. Handles moving across GameMaps."""
+        self.x = x
+        self.y = y
+        if gamemap:
+            if hasattr(self, "gamemap"):  # Possibly uninitialized.
+                self.gamemap.entities.remove(self)
+            self.gamemap = gamemap
+            gamemap.entities.add(self)
 
     def move(self, dx: int, dy: int) -> None:
         # Move the entity by a given amount
@@ -40,226 +60,14 @@ class Entity:
         self.y += dy
 {{</ highlight >}}
 
-The initializer (`__init__`) takes four arguments: `x`, `y`, `char`, and `color`.
-* `x` and `y` are pretty self explanatory: They represent the Entity's "x" and "y" coordinates on the map.
-* `char` is the character we'll use to represent the entity. Our player will be an "@" symbol, whereas something like a Troll (coming in a later chapter) can be the letter "T".
-* `color` is the color we'll use when drawing the Entity. We define `color` as a Tuple of three integers, representing the entity's RGB values.
+The key changes to our `Entity` class:
+* **Optional GameMap reference**: Entities can now be associated with a `GameMap`, and the map tracks all entities on it.
+* **Default parameters**: All parameters are now optional with sensible defaults, making entity creation more flexible.
+* **Place method**: A new method that properly handles placing an entity on a map, including removing it from any previous map.
 
-The other method is `move`, which takes `dx` and `dy` as arguments, and uses them to modify the Entity's position. This should look familiar to what we did in the last chapter.
+This bidirectional relationship between entities and the map will be essential for checking collisions, rendering, and game logic.
 
-Let's put our fancy new class into action\! Modify the first part of
-`main.py` to look like this:
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-#!/usr/bin/env python3
-import tcod
-
-from actions import EscapeAction, MovementAction
-+from entity import Entity
-from input_handlers import EventHandler
-
-
-def main() -> None:
-    screen_width = 80
-    screen_height = 50
-
--   player_x = int(screen_width / 2)
--   player_y = int(screen_height / 2)
-
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
-
-    event_handler = EventHandler()
-
-+   player = Entity(int(screen_width / 2), int(screen_height / 2), "@", (255, 255, 255))
-+   npc = Entity(int(screen_width / 2 - 5), int(screen_height / 2), "@", (255, 255, 0))
-+   entities = {npc, player}
-
-    with tcod.context.new_terminal(
-        ...
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>#!/usr/bin/env python3
-import tcod
-
-from actions import EscapeAction, MovementAction
-<span class="new-text">from entity import Entity</span>
-from input_handlers import EventHandler
-
-
-def main() -> None:
-    screen_width = 80
-    screen_height = 50
-
-    <span class="crossed-out-text">player_x = int(screen_width / 2)</span>
-    <span class="crossed-out-text">player_y = int(screen_height / 2)</span>
-
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
-
-    event_handler = EventHandler()
-
-    <span class="new-text">player = Entity(int(screen_width / 2), int(screen_height / 2), "@", (255, 255, 255))
-    npc = Entity(int(screen_width / 2 - 5), int(screen_height / 2), "@", (255, 255, 0))
-    entities = {npc, player}</span>
-
-    with tcod.context.new_terminal(
-        ...</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-We're importing the `Entity` class into `main.py`, and using it to
-initialize the player and a new NPC. We store these two in a set, that
-will eventually hold all our entities on the map.
-
-Also modify the part where we handle movement so that the Entity class
-handles the actual movement.
-
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-                if isinstance(action, MovementAction):
--                   player_x += action.dx
--                   player_y += action.dy
-+                   player.move(dx=action.dx, dy=action.dy)
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>                if isinstance(action, MovementAction):
-                    <span class="crossed-out-text">player_x += action.dx</span>
-                    <span class="crossed-out-text">player_y += action.dy</span>
-                    <span class="new-text">player.move(dx=action.dx, dy=action.dy)</span></pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-Lastly, update the drawing functions to use the new player object:
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-        while True:
--           root_console.print(x=player_x, y=player_y, string="@")
-+           root_console.print(x=player.x, y=player.y, string=player.char, fg=player.color)
-
-            context.present(root_console)
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>        while True:
-            <span class="crossed-out-text">root_console.print(x=player_x, y=player_y, string="@")</span>
-            <span class="new-text">root_console.print(x=player.x, y=player.y, string=player.char, fg=player.color)</span>
-
-            context.present(root_console)</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-If you run the project now, only the player gets drawn. We'll need to modify things to draw both entities, and eventually, draw the map we're going to create as well.
-
-Before doing that, it's worth stopping and taking a moment to think about our overall design. Currently, our `main.py` file is responsible for:
-
-* Setting up the initial variables, like screen size and the tileset.
-* Creating the entities
-* Drawing the screen and everything on it.
-* Reacting to the player's input.
-
-Soon, we're going to need to add a map as well. It's starting to become a bit much.
-
-One thing we can do is pass of some of these responsibilities to another class, which will be responsible for "running" our game. The `main.py` file can still set things up and tell that new class what to do, but this design should help keep the `main.py` file from getting too large over time.
-
-Let's create an `Engine` class, which will take the responsibilities of drawing the map and entities, as well as handling the player's input. Create a new file, and call it `engine.py`. In that file, put the following contents:
-
-
-```py3
-from typing import Set, Iterable, Any
-
-from tcod.context import Context
-from tcod.console import Console
-
-from actions import EscapeAction, MovementAction
-from entity import Entity
-from input_handlers import EventHandler
-
-
-class Engine:
-    def __init__(self, entities: Set[Entity], event_handler: EventHandler, player: Entity):
-        self.entities = entities
-        self.event_handler = event_handler
-        self.player = player
-
-    def handle_events(self, events: Iterable[Any]) -> None:
-        for event in events:
-            action = self.event_handler.dispatch(event)
-
-            if action is None:
-                continue
-
-            if isinstance(action, MovementAction):
-                self.player.move(dx=action.dx, dy=action.dy)
-
-            elif isinstance(action, EscapeAction):
-                raise SystemExit()
-
-    def render(self, console: Console, context: Context) -> None:
-        for entity in self.entities:
-            console.print(entity.x, entity.y, entity.char, fg=entity.color)
-
-        context.present(console)
-
-        console.clear()
-```
-
-Let's walk through the class a bit, to understand what we're trying to get at here.
-
-```py3
-class Engine:
-    def __init__(self, entities: Set[Entity], event_handler: EventHandler, player: Entity):
-        self.entities = entities
-        self.event_handler = event_handler
-        self.player = player
-```
-
-The `__init__` function takes three arguments:
-
-* `entities` is a set (of entities), which behaves kind of like a list that enforces uniqueness. That is, we can't add an Entity to the set twice, whereas a list would allow that. In our case, having an entity in `entities` twice doesn't make sense.
-* `event_handler` is the same `event_handler` that we used in `main.py`. It will handle our events.
-* `player` is the player Entity. We have a separate reference to it outside of `entities` for ease of access. We'll need to access `player` a lot more than a random entity in `entities`.
-
-```py3
-    def handle_events(self, events: Iterable[Any]) -> None:
-        for event in events:
-            action = self.event_handler.dispatch(event)
-
-            if action is None:
-                continue
-
-            if isinstance(action, MovementAction):
-                self.player.move(dx=action.dx, dy=action.dy)
-
-            elif isinstance(action, EscapeAction):
-                raise SystemExit()
-```
-
-This should look familiar: It's almost identical to our event processing in `main.py`. We pass the `events` to it so it can iterate through them, and it uses `self.event_handler` to handle the events.
-
-```py3
-    def render(self, console: Console, context: Context) -> None:
-        for entity in self.entities:
-            console.print(entity.x, entity.y, entity.char, fg=entity.color)
-
-        context.present(console)
-
-        console.clear()
-```
-
-This handles drawing our screen. We iterate through the `self.entities` and print them to their proper locations, then present the context, and clear the console, like we did in `main.py`.
-
-To make use of our new `Engine` class, we'll need to modify `main.py` quite a bit.
+Now let's update our `main.py` to create entities using this enhanced approach:
 
 {{< codetab >}}
 {{< diff-tab >}}
@@ -267,143 +75,194 @@ To make use of our new `Engine` class, we'll need to modify `main.py` quite a bi
 #!/usr/bin/env python3
 import tcod
 
--from actions import EscapeAction, MovementAction
-+from engine import Engine
-from entity import Entity
-from input_handlers import EventHandler
+from game.engine import Engine
+from game.entity import Entity
++from game.game_map import GameMap
+from game.input_handlers import BaseEventHandler, MainGameEventHandler
 
 
 def main() -> None:
     screen_width = 80
     screen_height = 50
 
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
++   map_width = 80
++   map_height = 45
 
-    event_handler = EventHandler()
+    tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
 
-    player = Entity(int(screen_width / 2), int(screen_height / 2), "@", (255, 255, 255))
-    npc = Entity(int(screen_width / 2 - 5), int(screen_height / 2), "@", (255, 255, 0))
-    entities = {npc, player}
+-   player = Entity(x=int(screen_width / 2), y=int(screen_height / 2), char="@", color=(255, 255, 255))
+-
+-   engine = Engine(player=player)
++   engine = Engine(player=Entity())
++
++   engine.game_map = GameMap(engine, map_width, map_height)
++
++   # Create player and place in map
++   engine.player.place(int(screen_width / 2), int(screen_height / 2), engine.game_map)
++   engine.player.char = "@"
++   engine.player.color = (255, 255, 255)
++
++   # Create an NPC
++   npc = Entity()
++   npc.place(int(screen_width / 2 - 5), int(screen_height / 2), engine.game_map)
++   npc.char = "@"
++   npc.color = (255, 255, 0)
 
-+   engine = Engine(entities=entities, event_handler=event_handler, player=player)
-
-    with tcod.context.new_terminal(
-        screen_width,
-        screen_height,
-        tileset=tileset,
-        title="Yet Another Roguelike Tutorial",
-        vsync=True,
-    ) as context:
-        root_console = tcod.Console(screen_width, screen_height, order="F")
-        while True:
--           root_console.print(x=player_x, y=player_y, string="@")
-+           engine.render(console=root_console, context=context)
-
--           context.present(root_console)
-+           events = tcod.event.wait()
-
-+           engine.handle_events(events)
--           root_console.clear()
-
--           for event in tcod.event.wait():
--               action = event_handler.dispatch(event)
-
--               if action is None:
--                   continue
-
--               if isinstance(action, MovementAction):
--                   player_x += action.dx
--                   player_y += action.dy
-
--               elif isinstance(action, EscapeAction):
--                   raise SystemExit()
-
-
-if __name__ == "__main__":
-    main()
+    handler: BaseEventHandler = MainGameEventHandler(engine)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>#!/usr/bin/env python3
 import tcod
 
-<span class="crossed-out-text">from actions import EscapeAction, MovementAction</span>
-<span class="new-text">from engine import Engine</span>
-from entity import Entity
-from input_handlers import EventHandler
+from game.engine import Engine
+from game.entity import Entity
+<span class="new-text">from game.game_map import GameMap</span>
+from game.input_handlers import BaseEventHandler, MainGameEventHandler
 
 
 def main() -> None:
     screen_width = 80
     screen_height = 50
 
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
+    <span class="new-text">map_width = 80
+    map_height = 45</span>
 
-    event_handler = EventHandler()
+    tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
 
-    player = Entity(int(screen_width / 2), int(screen_height / 2), "@", (255, 255, 255))
-    npc = Entity(int(screen_width / 2 - 5), int(screen_height / 2), "@", (255, 255, 0))
-    entities = {npc, player}
+    <span class="crossed-out-text">player = Entity(x=int(screen_width / 2), y=int(screen_height / 2), char="@", color=(255, 255, 255))</span>
+    <span class="crossed-out-text"></span>
+    <span class="crossed-out-text">engine = Engine(player=player)</span>
+    <span class="new-text">engine = Engine(player=Entity())
 
-    <span class="new-text">engine = Engine(entities=entities, event_handler=event_handler, player=player)</span>
+    engine.game_map = GameMap(engine, map_width, map_height)
 
-    with tcod.context.new_terminal(
-        screen_width,
-        screen_height,
-        tileset=tileset,
-        title="Yet Another Roguelike Tutorial",
-        vsync=True,
-    ) as context:
-        root_console = tcod.Console(screen_width, screen_height, order="F")
-        while True:
-            <span class="crossed-out-text">root_console.print(x=player_x, y=player_y, string="@")</span>
-            <span class="new-text">engine.render(console=root_console, context=context)</span>
+    # Create player and place in map
+    engine.player.place(int(screen_width / 2), int(screen_height / 2), engine.game_map)
+    engine.player.char = "@"
+    engine.player.color = (255, 255, 255)
 
-            <span class="crossed-out-text">context.present(root_console)</span>
-            <span class="new-text">events = tcod.event.wait()</span>
+    # Create an NPC
+    npc = Entity()
+    npc.place(int(screen_width / 2 - 5), int(screen_height / 2), engine.game_map)
+    npc.char = "@"
+    npc.color = (255, 255, 0)</span>
 
-            <span class="new-text">engine.handle_events(events)</span>
-            <span class="crossed-out-text">root_console.clear()</span>
-
-            <span class="crossed-out-text">for event in tcod.event.wait():</span>
-                <span class="crossed-out-text">action = event_handler.dispatch(event)</span>
-
-                <span class="crossed-out-text">if action is None:</span>
-                    <span class="crossed-out-text">continue</span>
-
-                <span class="crossed-out-text">if isinstance(action, MovementAction):</span>
-                    <span class="crossed-out-text">player_x += action.dx</span>
-                    <span class="crossed-out-text">player_y += action.dy</span>
-
-                <span class="crossed-out-text">elif isinstance(action, EscapeAction):</span>
-                    <span class="crossed-out-text">raise SystemExit()</span>
-
-
-if __name__ == "__main__":
-    main()</pre>
+    handler: BaseEventHandler = MainGameEventHandler(engine)</pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
-Because we've moved the rendering and event handling code to the `Engine` class, we no longer need it in `main.py`. All we need to do is create the `Engine` instance, pass the needed variables to it, and use the methods we wrote for it.
+We're creating the engine first with a basic entity as the player, then creating our GameMap (which we'll define shortly). We use the `place` method to position entities on the map, which automatically registers them with the map's entity tracking. Notice how we can set the entity properties after creation - this flexible approach will be useful when we generate entities procedurally.
 
-Run the project now, and your screen should look like this:
+Before we can run this, we need to create our `GameMap` class. But first, let's update our `Engine` class from Part 1 to work with the game map. Update `game/engine.py`:
 
-![Part 2 - Both Entities](images/part-2-drawing-both-entities.png)
 
-Our `main.py` file is looking a lot smaller and simpler, and we've rendered both the player and the NPC to the screen. With that, we'll want to move on to creating a map for our entity to move around in. We won't do the procedural dungeon generation in this chapter (that's next), but we'll at least get our class that will hold that map set up.
+```py3
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import tcod
+
+from game.entity import Entity
+
+if TYPE_CHECKING:
+    import game.game_map
+
+
+class Engine:
+    game_map: game.game_map.GameMap
+
+    def __init__(self, player: Entity):
+        self.player = player
+
+    def render(self, console: tcod.console.Console) -> None:
+        self.game_map.render(console)
+```
+
+Our updated `Engine` is much simpler - it just holds the player reference and delegates rendering to the game map. The `game_map` attribute is declared but not set in `__init__` - we'll set it right after creating the engine, as you saw in the main.py changes above. This pattern gives us flexibility in how we initialize our game state.
+
+Now we need to update our actions to work with this new structure. The actions need to get the engine through the entity-gamemap relationship. Update `game/actions.py`:
+
+```py3
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import game.engine
+    import game.entity
+
+
+class Action:
+    def __init__(self, entity: game.entity.Entity) -> None:
+        super().__init__()
+        self.entity = entity
+
+    @property
+    def engine(self) -> game.engine.Engine:
+        """Return the engine this action belongs to."""
+        return self.entity.gamemap.engine
+
+    def perform(self) -> None:
+        """Perform this action with the objects needed to determine its scope.
+
+        `self.engine` is the scope this action is being performed in.
+
+        `self.entity` is the object performing the action.
+
+        This method must be overridden by Action subclasses.
+        """
+        raise NotImplementedError()
+
+
+class EscapeAction(Action):
+    def perform(self) -> None:
+        raise SystemExit()
+
+
+class ActionWithDirection(Action):
+    def __init__(self, entity: game.entity.Entity, dx: int, dy: int):
+        super().__init__(entity)
+
+        self.dx = dx
+        self.dy = dy
+
+    def perform(self) -> None:
+        raise NotImplementedError()
+
+
+class MovementAction(ActionWithDirection):
+    def perform(self) -> None:
+        dest_x = self.entity.x + self.dx
+        dest_y = self.entity.y + self.dy
+
+        if not self.engine.game_map.in_bounds(dest_x, dest_y):
+            return  # Destination is out of bounds.
+        if not self.engine.game_map.tiles["walkable"][dest_x, dest_y]:
+            return  # Destination is blocked by a tile.
+        if self.engine.game_map.get_blocking_entity_at_location(dest_x, dest_y):
+            return  # Destination is blocked by an entity.
+
+        self.entity.move(self.dx, self.dy)
+```
+
+Notice how actions now:
+- Get the engine through `self.entity.gamemap.engine` - this chain of references keeps everything connected
+- Check for blocking entities in addition to walkable tiles
+- Use `perform()` without parameters - the action has everything it needs through its entity reference
+
+With our entities and actions ready, let's create the map system. We need to define tiles first, then the game map itself.
 
 We can represent the map with a new class, called `GameMap`. The map itself will be made up of tiles, which will contain certain data about if the tile is "walkable" (True if it's a floor, False if its a wall), "transparency" (again, True for floors, False for walls), and how to render the tile to the screen.
 
-We'll create the `tiles` first. Create a new file called `tile_types.py` and fill it with the following contents:
+We'll create the `tiles` first. Create a new file called `game/tiles.py` and fill it with the following contents:
 
 ```py3
 from typing import Tuple
 
-import numpy as np  # type: ignore
+from numpy.typing import NDArray
+import numpy as np
 
 # Tile graphics structured type compatible with Console.tiles_rgb.
 graphic_dt = np.dtype(
@@ -417,9 +276,10 @@ graphic_dt = np.dtype(
 # Tile struct used for statically defined tile data.
 tile_dt = np.dtype(
     [
-        ("walkable", np.bool),  # True if this tile can be walked over.
-        ("transparent", np.bool),  # True if this tile doesn't block FOV.
+        ("walkable", bool),  # True if this tile can be walked over.
+        ("transparent", bool),  # True if this tile doesn't block FOV.
         ("dark", graphic_dt),  # Graphics for when this tile is not in FOV.
+        ("light", graphic_dt),  # Graphics for when the tile is in FOV.
     ]
 )
 
@@ -429,16 +289,26 @@ def new_tile(
     walkable: int,
     transparent: int,
     dark: Tuple[int, Tuple[int, int, int], Tuple[int, int, int]],
-) -> np.ndarray:
-    """Helper function for defining individual tile types """
-    return np.array((walkable, transparent, dark), dtype=tile_dt)
+    light: Tuple[int, Tuple[int, int, int], Tuple[int, int, int]],
+) -> NDArray[np.void]:
+    """Helper function for defining individual tile types"""
+    return np.array((walkable, transparent, dark, light), dtype=tile_dt)
 
+
+# SHROUD represents unexplored, unseen tiles
+SHROUD = np.array((ord(" "), (255, 255, 255), (0, 0, 0)), dtype=graphic_dt)
 
 floor = new_tile(
-    walkable=True, transparent=True, dark=(ord(" "), (255, 255, 255), (50, 50, 150)),
+    walkable=True,
+    transparent=True,
+    dark=(ord(" "), (255, 255, 255), (50, 50, 150)),
+    light=(ord(" "), (255, 255, 255), (200, 180, 50)),
 )
 wall = new_tile(
-    walkable=False, transparent=False, dark=(ord(" "), (255, 255, 255), (0, 0, 100)),
+    walkable=False,
+    transparent=False,
+    dark=(ord(" "), (255, 255, 255), (0, 0, 100)),
+    light=(ord(" "), (255, 255, 255), (130, 110, 50)),
 )
 ```
 
@@ -467,18 +337,20 @@ We take this new data type and use it in the next bit:
 # Tile struct used for statically defined tile data.
 tile_dt = np.dtype(
     [
-        ("walkable", np.bool),  # True if this tile can be walked over.
-        ("transparent", np.bool),  # True if this tile doesn't block FOV.
+        ("walkable", bool),  # True if this tile can be walked over.
+        ("transparent", bool),  # True if this tile doesn't block FOV.
         ("dark", graphic_dt),  # Graphics for when this tile is not in FOV.
+        ("light", graphic_dt),  # Graphics for when the tile is in FOV.
     ]
 )
 ```
 
-This is yet another `dtype`, which we'll use in the actual tile itself. It's also made up of three parts:
+This is yet another `dtype`, which we'll use in the actual tile itself. It's made up of four parts:
 
 * `walkable`: A boolean that describes if the player can walk across this tile.
 * `transparent`: A boolean that describes if this tile does or does not block the field of view. Not used in this chapter, but will be in chapter 4.
-* `dark`: This uses our previously defined `dtype`, which holds the character to print, the foreground color, and the background color. Why is it called `dark`? Because later on, we'll want to differentiate between tiles that are and aren't in the field of view. `dark` will represent tiles that are not in the current field of view. Again, we'll cover that in part 4.
+* `dark`: This uses our previously defined `dtype`, which holds the character to print, the foreground color, and the background color. It represents tiles that are not in the current field of view.
+* `light`: Similar to `dark`, but for tiles that ARE in the field of view. We're defining both now so we don't have to refactor this later. For now, we'll just use `light` for all rendering.
 
 ```py3
 def new_tile(
@@ -486,450 +358,175 @@ def new_tile(
     walkable: int,
     transparent: int,
     dark: Tuple[int, Tuple[int, int, int], Tuple[int, int, int]],
-) -> np.ndarray:
-    """Helper function for defining individual tile types """
-    return np.array((walkable, transparent, dark), dtype=tile_dt)
+    light: Tuple[int, Tuple[int, int, int], Tuple[int, int, int]],
+) -> NDArray[np.void]:
+    """Helper function for defining individual tile types"""
+    return np.array((walkable, transparent, dark, light), dtype=tile_dt)
 ```
 
-This is a helper function, that we'll use in the next section to define our tile types. It takes the parameters `walkable`, `transparent`, and `dark`, which should look familiar, since they're the same data points we used in `tile_dt`. It creates a Numpy array of just the one `tile_dt` element, and returns it.
+This is a helper function, that we'll use in the next section to define our tile types. It takes the parameters `walkable`, `transparent`, `dark`, and `light`, which should look familiar, since they're the same data points we used in `tile_dt`. It creates a Numpy array of just the one `tile_dt` element, and returns it.
 
 ```py3
 floor = new_tile(
-    walkable=True, transparent=True, dark=(ord(" "), (255, 255, 255), (50, 50, 150)),
+    walkable=True,
+    transparent=True,
+    dark=(ord(" "), (255, 255, 255), (50, 50, 150)),
+    light=(ord(" "), (255, 255, 255), (200, 180, 50)),
 )
 wall = new_tile(
-    walkable=False, transparent=False, dark=(ord(" "), (255, 255, 255), (0, 0, 100)),
+    walkable=False,
+    transparent=False,
+    dark=(ord(" "), (255, 255, 255), (0, 0, 100)),
+    light=(ord(" "), (255, 255, 255), (130, 110, 50)),
 )
 ```
 
 Finally, we arrive to our actual tile types. We've got two: `floor` and `wall`.
 
-`floor` is both `walkable` and `transparent`. Its `dark` attribute consists of the space character (feel free to change this to something else, a lot of roguelikes use "#") and defines its foreground color as white (won't matter since it's an empty space) and a background color.
+`floor` is both `walkable` and `transparent`. Its `dark` and `light` attributes define how it looks out of and in the field of view respectively. The `light` version has a warmer, yellow-ish tone to show it's visible.
 
-`wall` is neither `walkable` nor `transparent`, and its `dark` attribute differs from `floor` slightly in its background color.
+`wall` is neither `walkable` nor `transparent`, with different colors for its `dark` and `light` states. We also define `SHROUD` for completely unexplored areas, though we won't use it until Part 4.
 
-Now let's use our newly created tiles by creating our map class. Create a file called `game_map.py` and fill it with the following:
+Now let's use our newly created tiles by creating our map class. Create a file called `game/game_map.py` and fill it with the following:
 
 ```py3
-import numpy as np  # type: ignore
-from tcod.console import Console
+from __future__ import annotations
 
-import tile_types
+from typing import TYPE_CHECKING, Optional, Set
+
+import numpy as np
+import tcod
+
+from game.tiles import floor, wall
+
+if TYPE_CHECKING:
+    import game.engine
+    import game.entity
 
 
 class GameMap:
-    def __init__(self, width: int, height: int):
+    def __init__(self, engine: game.engine.Engine, width: int, height: int):
+        self.engine = engine
         self.width, self.height = width, height
-        self.tiles = np.full((width, height), fill_value=tile_types.floor, order="F")
+        self.entities: Set[game.entity.Entity] = set()
+        self.tiles = np.full((width, height), fill_value=floor, order="F")
 
-        self.tiles[30:33, 22] = tile_types.wall
+        # Create a simple test wall
+        self.tiles[30:33, 22] = wall
+
+    def get_blocking_entity_at_location(
+        self,
+        location_x: int,
+        location_y: int,
+    ) -> Optional[game.entity.Entity]:
+        for entity in self.entities:
+            if entity.x == location_x and entity.y == location_y:
+                return entity
+
+        return None
 
     def in_bounds(self, x: int, y: int) -> bool:
         """Return True if x and y are inside of the bounds of this map."""
         return 0 <= x < self.width and 0 <= y < self.height
 
-    def render(self, console: Console) -> None:
-        console.tiles_rgb[0:self.width, 0:self.height] = self.tiles["dark"]
+    def render(self, console: tcod.console.Console) -> None:
+        """
+        Renders the map.
+
+        For now, we'll render all tiles as visible.
+        In Part 4 we'll add FOV.
+        """
+        console.rgb[0 : self.width, 0 : self.height] = self.tiles["light"]
+
+        for entity in self.entities:
+            console.print(x=entity.x, y=entity.y, string=entity.char, fg=entity.color)
 ```
 
 Let's break down `GameMap` a bit:
 
 ```py3
-    def __init__(self, width: int, height: int):
+    def __init__(self, engine: game.engine.Engine, width: int, height: int):
+        self.engine = engine
         self.width, self.height = width, height
-        self.tiles = np.full((width, height), fill_value=tile_types.floor, order="F")
+        self.entities: Set[game.entity.Entity] = set()
+        self.tiles = np.full((width, height), fill_value=floor, order="F")
 
-        self.tiles[30:33, 22] = tile_types.wall
+        self.tiles[30:33, 22] = wall
 ```
 
-The initializer takes `width` and `height` integers and assigns them, in one line.
+The initializer takes an `engine` reference (creating that bidirectional relationship), plus `width` and `height` integers.
 
-The `self.tiles` line might look a little strange if you're not used to Numpy. Basically, we create a 2D array, filled with the same values, which in this case, is the `tile_types.floor` that we created earlier. This will fill `self.tiles` with floor tiles.
+The `self.entities` set tracks all entities on this map - when entities are placed using their `place()` method, they're automatically added here.
 
-`self.tiles[30:33, 22] = tile_types.wall` creates a small, three tile wide wall at the specified location. We won't normally hard-code walls like this, the wall is just for demonstration purposes. We'll remove it in the next part.
+The `self.tiles` line creates a 2D array filled with `floor` tiles. The `order="F"` ensures column-major order, matching how we index with [x, y].
+
+`self.tiles[30:33, 22] = wall` creates a small test wall. We'll remove this when we add proper dungeon generation in the next part.
 
 ```py3
-    def in_bounds(self, x: int, y: int) -> bool:
-        """Return True if x and y are inside of the bounds of this map."""
-        return 0 <= x < self.width and 0 <= y < self.height
+    def get_blocking_entity_at_location(
+        self,
+        location_x: int,
+        location_y: int,
+    ) -> Optional[game.entity.Entity]:
+        for entity in self.entities:
+            if entity.x == location_x and entity.y == location_y:
+                return entity
+        return None
 ```
 
-As the docstring alludes to, this method returns `True` if the given x and y values are within the map's boundaries. We can use this to ensure the player doesn't move beyond the map, into the void.
+This method checks if any entity is blocking a given location. We'll use this in movement actions to prevent entities from walking through each other.
 
 ```py3
-    def render(self, console: Console) -> None:
-        console.tiles_rgb[0:self.width, 0:self.height] = self.tiles["dark"]
+    def render(self, console: tcod.console.Console) -> None:
+        console.rgb[0 : self.width, 0 : self.height] = self.tiles["light"]
+        
+        for entity in self.entities:
+            console.print(x=entity.x, y=entity.y, string=entity.char, fg=entity.color)
 ```
 
-Using the `Console` class's `tiles_rgb` method, we can quickly render the entire map. This method proves much faster than using the `console.print` method that we use for the individual entities.
+The render method does two things:
+1. Uses `console.rgb` to quickly render all tiles at once (much faster than printing each individually)
+2. Draws all entities on top of the tiles
 
-With our `GameMap` class ready to go, let's modify `main.py` to make use of it. We'll also need to modify `Engine` to hold the map. Let's start with `main.py` though:
+Note we're using `tiles["light"]` for now - in Part 4 we'll differentiate between visible and non-visible tiles.
 
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-#!/usr/bin/env python3
-import tcod
+With our `GameMap` class ready to go, our main.py already sets it up properly. The flow is:
+1. Create the engine with just the player
+2. Create the GameMap with a reference to the engine
+3. Use the `place()` method to position entities on the map
 
-from engine import Engine
-from entity import Entity
-+from game_map import GameMap
-from input_handlers import EventHandler
+This creates the bidirectional relationships we need - the engine knows about the map, the map knows about the engine, and entities know which map they're on.
 
+Also, we need to update our input handler to call `perform()` without parameters. In `game/input_handlers.py`, find the `handle_action` method and update it:
 
-def main() -> None:
-    screen_width = 80
-    screen_height = 50
+```py3
+    def handle_action(self, action: Optional[Action]) -> bool:
+        """Handle actions returned from event methods.
 
-+   map_width = 80
-+   map_height = 45
+        Returns True if the action will advance a turn.
+        """
+        if action is None:
+            return False
 
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
-
-    event_handler = EventHandler()
-
-    player = Entity(int(screen_width / 2), int(screen_height / 2), "@", (255, 255, 255))
-    npc = Entity(int(screen_width / 2 - 5), int(screen_height / 2), "@", (255, 255, 0))
-    entities = {npc, player}
-
-+   game_map = GameMap(map_width, map_height)
-
--   engine = Engine(entities=entities, event_handler=event_handler, player=player)
-+   engine = Engine(entities=entities, event_handler=event_handler, game_map=game_map, player=player)
-
-    with tcod.context.new_terminal(
-        screen_width,
-        screen_height,
-        tileset=tileset,
-        title="Yet Another Roguelike Tutorial",
-        vsync=True,
-    ) as context:
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>#!/usr/bin/env python3
-import tcod
-
-from engine import Engine
-from entity import Entity
-<span class="new-text">from game_map import GameMap</span>
-from input_handlers import EventHandler
-
-
-def main() -> None:
-    screen_width = 80
-    screen_height = 50
-
-    <span class="new-text">map_width = 80
-    map_height = 45</span>
-
-    tileset = tcod.tileset.load_tilesheet(
-        "dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD
-    )
-
-    event_handler = EventHandler()
-
-    player = Entity(int(screen_width / 2), int(screen_height / 2), "@", (255, 255, 255))
-    npc = Entity(int(screen_width / 2 - 5), int(screen_height / 2), "@", (255, 255, 0))
-    entities = {npc, player}
-
-    <span class="new-text">game_map = GameMap(map_width, map_height)</span>
-
-    <span class="crossed-out-text">engine = Engine(entities=entities, event_handler=event_handler, player=player)</span>
-    <span class="new-text">engine = Engine(entities=entities, event_handler=event_handler, game_map=game_map, player=player)</span>
-
-    with tcod.context.new_terminal(
-        screen_width,
-        screen_height,
-        tileset=tileset,
-        title="Yet Another Roguelike Tutorial",
-        vsync=True,
-    ) as context:</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-We've added `map_width` and `map_height`, two integers, which we use in the `GameMap` class to describe its width and height. The `game_map` variable holds our initialized `GameMap`, and we then pass it into `engine`. The `Engine` class doesn't yet accept a `GameMap` in its `__init__` function, so let's fix that now.
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-from typing import Set, Iterable, Any
-
-from tcod.context import Context
-from tcod.console import Console
-
-from actions import EscapeAction, MovementAction
-from entity import Entity
-+from game_map import GameMap
-from input_handlers import EventHandler
-
-
-class Engine:
--   def __init__(self, entities: Set[Entity], event_handler: EventHandler, player: Entity):
-+   def __init__(self, entities: Set[Entity], event_handler: EventHandler, game_map: GameMap, player: Entity):
-        self.entities = entities
-        self.event_handler = event_handler
-+       self.game_map = game_map
-        self.player = player
-
-    def handle_events(self, events: Iterable[Any]) -> None:
-        for event in events:
-            action = self.event_handler.dispatch(event)
-
-            if action is None:
-                continue
-
-            if isinstance(action, MovementAction):
--               self.player.move(dx=action.dx, dy=action.dy)
-+               if self.game_map.tiles["walkable"][self.player.x + action.dx, self.player.y + action.dy]:
-+                   self.player.move(dx=action.dx, dy=action.dy)
-
-            elif isinstance(action, EscapeAction):
-                raise SystemExit()
-
-    def render(self, console: Console, context: Context) -> None:
-+       self.game_map.render(console)
-
-        for entity in self.entities:
-            console.print(entity.x, entity.y, entity.char, fg=entity.color)
-
-        context.present(console)
-
-        console.clear()
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>from typing import Set, Iterable, Any
-
-from tcod.context import Context
-from tcod.console import Console
-
-from actions import EscapeAction, MovementAction
-from entity import Entity
-<span class="new-text">from game_map import GameMap</span>
-from input_handlers import EventHandler
-
-
-class Engine:
-    <span class="crossed-out-text">def __init__(self, entities: Set[Entity], event_handler: EventHandler, player: Entity):</span>
-    <span class="new-text">def __init__(self, entities: Set[Entity], event_handler: EventHandler, game_map: GameMap, player: Entity):</span>
-        self.entities = entities
-        self.event_handler = event_handler
-        <span class="new-text">self.game_map = game_map</span>
-        self.player = player
-
-    def handle_events(self, events: Iterable[Any]) -> None:
-        for event in events:
-            action = self.event_handler.dispatch(event)
-
-            if action is None:
-                continue
-
-            if isinstance(action, MovementAction):
-                <span class="crossed-out-text">self.player.move(dx=action.dx, dy=action.dy)</span>
-                <span class="new-text">if self.game_map.tiles["walkable"][self.player.x + action.dx, self.player.y + action.dy]:
-                    self.player.move(dx=action.dx, dy=action.dy)</span>
-
-            elif isinstance(action, EscapeAction):
-                raise SystemExit()
-
-    def render(self, console: Console, context: Context) -> None:
-        <span class="new-text">self.game_map.render(console)</span>
-
-        for entity in self.entities:
-            console.print(entity.x, entity.y, entity.char, fg=entity.color)
-
-        context.present(console)
-
-        console.clear()</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-We've imported the `GameMap` class, and we're now passing an instance of it in the `Engine` class's initializer. From there, we utilize it in two ways:
-
-* In `handle_events`, we use it to check if the tile is "walkable", and only then do we move the player.
-* In `render`, we call the `GameMap`'s `render` method to draw it to the screen.
+        action.perform()  # No longer passing self.engine
+        return True
+```
 
 If you run the project now, it should look like this:
 
 ![Part 2 - Both Entities and Map](images/part-2-entities-and-map.png)
 
-The darker squares represent the wall, which, if you try to move your character through, should prove to be impenetrable.
+The darker squares represent the wall, which, if you try to move your character through, should prove to be impenetrable. The player can't move through the NPC either - our collision detection is working!
 
-Before we finish this up, there's one last improvement we can make, thanks to our new `Engine` class: We can expand our `Action` classes to do a bit more of the heavy lifting, rather than leaving it to the `Engine`. This is because we can pass the `Engine` to the `Action`, providing it with the context it needs to do what we want.
+The key architectural decisions we've made:
+- **Bidirectional relationships**: Entities know their map, maps know their engine
+- **Actions are self-contained**: Each action knows how to perform itself given its entity
+- **Collision detection**: Movement checks for walls AND other entities
+- **Flexible entity creation**: Entities can be created with defaults and configured later
 
-Here's what that looks like:
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-+from __future__ import annotations
-
-+from typing import TYPE_CHECKING
-
-+if TYPE_CHECKING:
-+   from engine import Engine
-+   from entity import Entity
-
-
-class Action:
--   pass
-+   def perform(self, engine: Engine, entity: Entity) -> None:
-+       """Perform this action with the objects needed to determine its scope.
-
-+       `engine` is the scope this action is being performed in.
-
-+       `entity` is the object performing the action.
-
-+       This method must be overridden by Action subclasses.
-+       """
-+       raise NotImplementedError()
-
-
-class EscapeAction(Action):
--   pass
-+   def perform(self, engine: Engine, entity: Entity) -> None:
-+       raise SystemExit()
-
-
-class MovementAction(Action):
-    def __init__(self, dx: int, dy: int):
-        super().__init__()
-
-        self.dx = dx
-        self.dy = dy
-
-+   def perform(self, engine: Engine, entity: Entity) -> None:
-+       dest_x = entity.x + self.dx
-+       dest_y = entity.y + self.dy
-
-+       if not engine.game_map.in_bounds(dest_x, dest_y):
-+           return  # Destination is out of bounds.
-+       if not engine.game_map.tiles["walkable"][dest_x, dest_y]:
-+           return  # Destination is blocked by a tile.
-
-+       entity.move(self.dx, self.dy)
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre><span class="new-text">from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from engine import Engine
-    from entity import Entity</span>
-
-
-class Action:
-    <span class="crossed-out-text">pass</span>
-    <span class="new-text">def perform(self, engine: Engine, entity: Entity) -> None:
-        """Perform this action with the objects needed to determine its scope.
-
-        `engine` is the scope this action is being performed in.
-
-        `entity` is the object performing the action.
-
-        This method must be overridden by Action subclasses.
-        """
-        raise NotImplementedError()</span>
-
-
-class EscapeAction(Action):
-    <span class="crossed-out-text">pass</span>
-    <span class="new-text">def perform(self, engine: Engine, entity: Entity) -> None:
-        raise SystemExit()</span>
-
-
-class MovementAction(Action):
-    def __init__(self, dx: int, dy: int):
-        super().__init__()
-
-        self.dx = dx
-        self.dy = dy
-
-    <span class="new-text">def perform(self, engine: Engine, entity: Entity) -> None:
-        dest_x = entity.x + self.dx
-        dest_y = entity.y + self.dy
-
-        if not engine.game_map.in_bounds(dest_x, dest_y):
-            return  # Destination is out of bounds.
-        if not engine.game_map.tiles["walkable"][dest_x, dest_y]:
-            return  # Destination is blocked by a tile.
-
-        entity.move(self.dx, self.dy)</span></pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-Now we're passing in the `Engine` and the `Entity` performing the action to each `Action` subclass. Each subclass needs to implement its own version of the `perform` method. In the case of `EscapeAction`, we're just raising `SystemExit`. In the case of `MovementAction`, we double check that the move is "in bounds" and on a "walkable" tile, and if either is true, we return without doing anything. If neither of those cases prove true, then we move the entity, as before.
-
-So what does this new technique do for us? As it turns out, we can simplify the `Engine.handle_events` method like this:
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-...
--from actions import EscapeAction, MovementAction
-from entity import Entity
-from game_map import GameMap
-from input_handlers import EventHandler
-
-
-class Engine:
-    ...
-
-    def handle_events(self, events: Iterable[Any]) -> None:
-        for event in events:
-            action = self.event_handler.dispatch(event)
-
-            if action is None:
-                continue
-
-+           action.perform(self, self.player)
--           if isinstance(action, MovementAction):
--               if self.game_map.tiles["walkable"][self.player.x + action.dx, self.player.y + action.dy]:
--                   self.player.move(dx=action.dx, dy=action.dy)
-
--           elif isinstance(action, EscapeAction):
--               raise SystemExit()
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>...
-<span class="crossed-out-text">from actions import EscapeAction, MovementAction</span>
-from entity import Entity
-from game_map import GameMap
-from input_handlers import EventHandler
-
-
-class Engine:
-    ...
-
-    def handle_events(self, events: Iterable[Any]) -> None:
-        for event in events:
-            action = self.event_handler.dispatch(event)
-
-            if action is None:
-                continue
-
-            <span class="new-text">action.perform(self, self.player)</span>
-            <span class="crossed-out-text">if isinstance(action, MovementAction):</span>
-                <span class="crossed-out-text">if self.game_map.tiles["walkable"][self.player.x + action.dx, self.player.y + action.dy]:</span>
-                    <span class="crossed-out-text">self.player.move(dx=action.dx, dy=action.dy)</span>
-
-            <span class="crossed-out-text">elif isinstance(action, EscapeAction):</span>
-                <span class="crossed-out-text">raise SystemExit()</span></pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-Much simpler! Run the project again, and it should function the same as before.
-
-With that, Part 2 is now complete! We've managed to lay the groundwork for generating dungeons and moving through them, which, as it happens, is what the next part is all about.
+With that, Part 2 is now complete! We've enhanced our entity system to work with maps, created a tile-based map system, and laid the groundwork for generating dungeons and moving through them, which, as it happens, is what the next part is all about.
 
 If you want to see the code so far in its entirety, [click
-here](https://github.com/TStand90/tcod_tutorial_v2/tree/2020/part-2).
+here](https://github.com/jmccardle/tcod_tutorial_v2/tree/part-02).
 
-[Click here to move on to the next part of this
-tutorial.](/tutorials/tcod/v2/part-3)
+[Click here to move on to the next part of this tutorial.](/tutorials/tcod/part-03)
