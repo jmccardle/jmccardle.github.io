@@ -693,8 +693,6 @@ That wraps up part one of this tutorial\! If you're using git or some
 other form of version control (and I recommend you do), commit your
 changes now.
 
-If you want to see the code so far in its entirety, [click
-here](https://github.com/jmccardle/tcod_tutorial_v2/tree/part-1).
+If you want to see the code so far in its entirety, [click here](https://github.com/jmccardle/tcod_tutorial_v2/tree/part-01).
 
-[Click here to move on to the next part of this
-tutorial.](/tutorials/tcod/part-2)
+[Click here to move on to the next part of this tutorial.](/tutorials/tcod/part-02)
