@@ -216,13 +216,10 @@ remains the same.
 
 ### Getting help
 
-Be sure to check out the [Roguelike Development
-Subreddit](https://www.reddit.com/r/roguelikedev) for help. There's a
-link there to the Discord channel as well.
+Be sure to check out the [Roguelike Development Subreddit](https://www.reddit.com/r/roguelikedev) for help. There's a link there to the Discord channel as well.
 
 -----
 
 ### Ready to go?
 
-Once you're set up and ready to go, you can proceed to [Part
-1](/tutorials/tcod/v2/part-1).
+Once you're set up and ready to go, you can proceed to [Part 1](/tutorials/tcod/v2/part-01).
