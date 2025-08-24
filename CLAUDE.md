@@ -123,3 +123,4 @@ Use todo lists to track:
 - the code is available on branches at this URL: https://github.com/jmccardle/tcod_tutorial_v2/tree/part-01 (and part-02, part-03, ... part-13)
 The link to each section is /tutorials/tcod/part-02, which will need updated at the bottom of each part's markdown file.
 image links should be relative links from the tcod directory, with "images/<filename>" being an existing filename. The filenames haven't been renamed and I did a search and replace to update the URLs in the markdown files, but change incorrect links if spotted.
+- you can check out the branches part-06, part-07, part-08, part-09, part-10, ... part-13 to get the correct tutorial code in tcod_tutorial_fixes/tcod_tutorial_v2
