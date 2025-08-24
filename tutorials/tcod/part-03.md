@@ -6,30 +6,44 @@ draft: false
 
 *Note: This part of the tutorial relies on TCOD version 11.14 or higher. You might need to upgrade the library (and your requirements.txt file, if you're using one).*
 
-Remember how we created a wall in the last part? We won't need that anymore. Additionally, our dungeon generator will start by filling the entire map with "wall" tiles and "carving" out rooms, so we can modify our `GameMap` class to fill in walls instead of floors.
+Remember how we created a wall in the last part? We won't need that anymore. Additionally, our dungeon generator will start by filling the entire map with "wall" tiles and "carving" out rooms, so we can modify our `GameMap` class in `game/game_map.py` to fill in walls instead of floors.
 
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-class GameMap:
-    def __init__(self, width: int, height: int):
-        self.width, self.height = width, height
--       self.tiles = np.full((width, height), fill_value=tile_types.floor, order="F")
-+       self.tiles = np.full((width, height), fill_value=tile_types.wall, order="F")
+-from game.tiles import floor, wall
++from game.tiles import wall
 
--       self.tiles[30:33, 22] = tile_types.wall
-        ...
+...
+
+class GameMap:
+    def __init__(self, engine: game.engine.Engine, width: int, height: int):
+        self.engine = engine
+        self.width, self.height = width, height
+        self.entities: Set[game.entity.Entity] = set()
+-       self.tiles = np.full((width, height), fill_value=floor, order="F")
++       self.tiles = np.full((width, height), fill_value=wall, order="F")
+
+-       # Create a simple test wall
+-       self.tiles[30:33, 22] = wall
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>class GameMap:
-    def __init__(self, width: int, height: int):
-        self.width, self.height = width, height
-        <span class="crossed-out-text">self.tiles = np.full((width, height), fill_value=tile_types.floor, order="F")</span>
-        <span class="new-text">self.tiles = np.full((width, height), fill_value=tile_types.wall, order="F")</span>
+<pre><span class="crossed-out-text">from game.tiles import floor, wall</span>
+<span class="new-text">from game.tiles import wall</span>
 
-        <span class="crossed-out-text">self.tiles[30:33, 22] = tile_types.wall</span>
-        ...</pre>
+...
+
+class GameMap:
+    def __init__(self, engine: game.engine.Engine, width: int, height: int):
+        self.engine = engine
+        self.width, self.height = width, height
+        self.entities: Set[game.entity.Entity] = set()
+        <span class="crossed-out-text">self.tiles = np.full((width, height), fill_value=floor, order="F")</span>
+        <span class="new-text">self.tiles = np.full((width, height), fill_value=wall, order="F")</span>
+
+        <span class="crossed-out-text"># Create a simple test wall</span>
+        <span class="crossed-out-text">self.tiles[30:33, 22] = wall</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -37,12 +51,17 @@ Now, on to our dungeon generator.
 
 The original version of this tutorial put all of the dungeon generation in the `GameMap` class. In fact, this was my plan for this tutorial as well. But, as HexDecimal (author of the TCOD library) pointed out in a pull request, that's not very extensible. It puts a lot of code in `GameMap` where it doesn't necessarily belong, and the class will grow to huge proportions if you ever decide to add an alternate dungeon generator.
 
-The better approach is to put our new code in a separate file, and utilize `GameMap` there. Let's create a new file, called `procgen.py`, which will house our procedural generator.
+The better approach is to put our new code in a separate file, and utilize `GameMap` there. Let's create a new file in the `game` directory, called `procgen.py`, which will house our procedural generator.
 
-Let's start by creating a class which we'll use to create our rooms. We can call it `RectangularRoom`:
+Let's start by creating a class which we'll use to create our rooms. We can call it `RectangularRoom`. In `game/procgen.py`:
 
 ```py3
-from typing import Tuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Tuple
+
+if TYPE_CHECKING:
+    pass  # We'll add imports here later
 
 
 class RectangularRoom:
@@ -123,10 +142,15 @@ Before we dive into a truly procedurally generated dungeon, let's begin with a s
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-from typing import Tuple
+from __future__ import annotations
 
-+from game_map import GameMap
-+import tile_types
+from typing import TYPE_CHECKING, Tuple
+
++from game.game_map import GameMap
++from game.tiles import floor
+
++if TYPE_CHECKING:
++   import game.engine
 
 
 class RectangularRoom:
@@ -142,14 +166,19 @@ class RectangularRoom:
         return slice(self.x1 + 1, self.x2), slice(self.y1 + 1, self.y2)
 
 
-+def generate_dungeon(map_width, map_height) -> GameMap:
-+   dungeon = GameMap(map_width, map_height)
++def generate_dungeon(
++   map_width: int,
++   map_height: int,
++   engine: game.engine.Engine,
++) -> GameMap:
++   """Generate a new dungeon map."""
++   dungeon = GameMap(engine, map_width, map_height)
 
 +   room_1 = RectangularRoom(x=20, y=15, width=10, height=15)
 +   room_2 = RectangularRoom(x=35, y=15, width=10, height=15)
 
-+   dungeon.tiles[room_1.inner] = tile_types.floor
-+   dungeon.tiles[room_2.inner] = tile_types.floor
++   dungeon.tiles[room_1.inner] = floor
++   dungeon.tiles[room_2.inner] = floor
 
 +   return dungeon
 {{</ highlight >}}
@@ -157,8 +186,11 @@ class RectangularRoom:
 {{< original-tab >}}
 <pre>from typing import Tuple
 
-<span class="new-text">from game_map import GameMap
-import tile_types</span>
+<span class="new-text">from game.game_map import GameMap
+from game.tiles import floor
+
+if TYPE_CHECKING:
+    import game.engine</span>
 
 
 class RectangularRoom:
@@ -174,41 +206,75 @@ class RectangularRoom:
         return slice(self.x1 + 1, self.x2), slice(self.y1 + 1, self.y2)
 
 
-<span class="new-text">def generate_dungeon(map_width, map_height) -> GameMap:
-    dungeon = GameMap(map_width, map_height)
+<span class="new-text">def generate_dungeon(
+    map_width: int,
+    map_height: int,
+    engine: game.engine.Engine,
+) -> GameMap:
+    """Generate a new dungeon map."""
+    dungeon = GameMap(engine, map_width, map_height)
 
     room_1 = RectangularRoom(x=20, y=15, width=10, height=15)
     room_2 = RectangularRoom(x=35, y=15, width=10, height=15)
 
-    dungeon.tiles[room_1.inner] = tile_types.floor
-    dungeon.tiles[room_2.inner] = tile_types.floor
+    dungeon.tiles[room_1.inner] = floor
+    dungeon.tiles[room_2.inner] = floor
 
     return dungeon</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
-Now we can modify `main.py` to utilize our now `generate_dungeon` function.
+Now we can modify `main.py` to utilize our `generate_dungeon` function. Note that we'll also remove the NPC for now - we'll add proper monster placement in Part 5.
 
 {{< codetab >}} {{< diff-tab >}} {{< highlight diff >}}
 #!/usr/bin/env python3
 import tcod
 
-from engine import Engine
-from entity import Entity
--from game_map import GameMap
-from input_handlers import EventHandler
-+from procgen import generate_dungeon
+from game.engine import Engine
+from game.entity import Entity
+from game.input_handlers import BaseEventHandler, MainGameEventHandler
++from game.procgen import generate_dungeon
++import game.game_map
 
 
 def main() -> None:
     ...
+    map_width = 80
+    map_height = 45
 
-    entities = {npc, player}
++   room_max_size = 10
++   room_min_size = 6
++   max_rooms = 30
 
--   game_map = GameMap(map_width, map_height)
-+   game_map = generate_dungeon(map_width, map_height)
+    tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
 
-    engine = Engine(entities=entities, event_handler=event_handler, game_map=game_map, player=player)
+-   engine = Engine(player=Entity())
+-
+-   engine.game_map = GameMap(engine, map_width, map_height)
+-
+-   # Create player and place in map
+-   engine.player.place(int(screen_width / 2), int(screen_height / 2), engine.game_map)
+-   engine.player.char = "@"
+-   engine.player.color = (255, 255, 255)
+-
+-   # Create an NPC
+-   npc = Entity()
+-   npc.place(int(screen_width / 2 - 5), int(screen_height / 2), engine.game_map)
+-   npc.char = "@"
+-   npc.color = (255, 255, 0)
++   player = Entity(x=0, y=0, char="@", color=(255, 255, 255))
++   engine = Engine(player=player)
++
++   engine.game_map = generate_dungeon(
++       max_rooms=max_rooms,
++       room_min_size=room_min_size,
++       room_max_size=room_max_size,
++       map_width=map_width,
++       map_height=map_height,
++       engine=engine,
++   )
+
+    handler: BaseEventHandler = MainGameEventHandler(engine)
     ...
 {{</ highlight >}}
 {{</ diff-tab >}}
@@ -216,27 +282,56 @@ def main() -> None:
 <pre>#!/usr/bin/env python3
 import tcod
 
-from engine import Engine
-from entity import Entity
-<span class="crossed-out-text">from game_map import GameMap</span>
-from input_handlers import EventHandler
-<span class="new-text">from procgen import generate_dungeon</span>
+from game.engine import Engine
+from game.entity import Entity
+from game.input_handlers import BaseEventHandler, MainGameEventHandler
+<span class="new-text">from game.procgen import generate_dungeon
+import game.game_map</span>
 
 
 def main() -> None:
     ...
+    map_width = 80
+    map_height = 45
 
-    entities = {npc, player}
+    <span class="new-text">room_max_size = 10
+    room_min_size = 6
+    max_rooms = 30</span>
 
-    <span class="crossed-out-text">game_map = GameMap(map_width, map_height)</span>
-    <span class="new-text">game_map = generate_dungeon(map_width, map_height)</span>
+    tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
 
-    engine = Engine(entities=entities, event_handler=event_handler, game_map=game_map, player=player)
+    <span class="crossed-out-text">engine = Engine(player=Entity())</span>
+    <span class="crossed-out-text"></span>
+    <span class="crossed-out-text">engine.game_map = GameMap(engine, map_width, map_height)</span>
+    <span class="crossed-out-text"></span>
+    <span class="crossed-out-text"># Create player and place in map</span>
+    <span class="crossed-out-text">engine.player.place(int(screen_width / 2), int(screen_height / 2), engine.game_map)</span>
+    <span class="crossed-out-text">engine.player.char = "@"</span>
+    <span class="crossed-out-text">engine.player.color = (255, 255, 255)</span>
+    <span class="crossed-out-text"></span>
+    <span class="crossed-out-text"># Create an NPC</span>
+    <span class="crossed-out-text">npc = Entity()</span>
+    <span class="crossed-out-text">npc.place(int(screen_width / 2 - 5), int(screen_height / 2), engine.game_map)</span>
+    <span class="crossed-out-text">npc.char = "@"</span>
+    <span class="crossed-out-text">npc.color = (255, 255, 0)</span>
+    <span class="new-text">player = Entity(x=0, y=0, char="@", color=(255, 255, 255))
+    engine = Engine(player=player)
+
+    engine.game_map = generate_dungeon(
+        max_rooms=max_rooms,
+        room_min_size=room_min_size,
+        room_max_size=room_max_size,
+        map_width=map_width,
+        map_height=map_height,
+        engine=engine,
+    )</span>
+
+    handler: BaseEventHandler = MainGameEventHandler(engine)
     ...</pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
-Now is a good time to run your code and make sure everything works as expected. The changes we've made puts two sample rooms on the map, with our player in one of them (our poor NPC is stuck in a wall though).
+Now is a good time to run your code and make sure everything works as expected. The changes we've made puts two sample rooms on the map, with our player in one of them.
 
 ![Part 3 - Two Rooms](images/part-3-two-rooms.png)
 
@@ -245,14 +340,16 @@ I'm sure you've noticed already, but the rooms are not connected. What's the use
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
+from __future__ import annotations
+
+-from typing import TYPE_CHECKING, Tuple
++from typing import TYPE_CHECKING, Iterator, Tuple
 +import random
--from typing import Tuple
-+from typing import Iterator, Tuple
 
 +import tcod
 
-from game_map import GameMap
-import tile_types
+from game.game_map import GameMap
+from game.tiles import floor
 
 ...
 
@@ -285,14 +382,16 @@ def generate_dungeon(map_width, map_height) -> GameMap:
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre><span class="new-text">import random</span>
-<span class="crossed-out-text">from typing import Tuple</span>
-<span class="new-text">from typing import Iterator, Tuple</span>
+<pre>from __future__ import annotations
+
+<span class="crossed-out-text">from typing import TYPE_CHECKING, Tuple</span>
+<span class="new-text">from typing import TYPE_CHECKING, Iterator, Tuple
+import random</span>
 
 <span class="new-text">import tcod</span>
 
-from game_map import GameMap
-import tile_types
+from game.game_map import GameMap
+from game.tiles import floor
 
 ...
 
@@ -374,20 +473,20 @@ Let's put this code to use by drawing a tunnel between our two rooms.
 
 {{< codetab >}} {{< diff-tab >}} {{< highlight diff >}}
     ...
-    dungeon.tiles[room_2.inner] = tile_types.floor
+    dungeon.tiles[room_2.inner] = floor
 
 +   for x, y in tunnel_between(room_2.center, room_1.center):
-+       dungeon.tiles[x, y] = tile_types.floor
++       dungeon.tiles[x, y] = floor
 
     return dungeon
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>    ...
-    dungeon.tiles[room_2.inner] = tile_types.floor
+    dungeon.tiles[room_2.inner] = floor
 
     <span class="new-text">for x, y in tunnel_between(room_2.center, room_1.center):
-        dungeon.tiles[x, y] = tile_types.floor</span>
+        dungeon.tiles[x, y] = floor</span>
 
     return dungeon</pre>
 {{</ original-tab >}}
@@ -494,61 +593,49 @@ def tunnel_between(
 
 `intersects` checks if the room and another room (`other` in the arguments) intersect or not. It returns `True` if the do, `False` if they don't. We'll use this to determine if two rooms are overlapping or not.
 
-We're going to need a few variables to set the maximum and minimum size of the rooms, along with the maximum number of rooms one floor can have. Add the following to `main.py`:
+We're going to need a few variables to set the maximum and minimum size of the rooms, along with the maximum number of rooms one floor can have. We already added these to `main.py` in our earlier changes:
 
-{{< codetab >}} {{< diff-tab >}} {{< highlight diff >}}
-    ...
-    map_height = 45
-
-+   room_max_size = 10
-+   room_min_size = 6
-+   max_rooms = 30
-
-    tileset = tcod.tileset.load_tilesheet(
-    ...
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>    ...
-    map_height = 45
-
-    <span class="new-text">room_max_size = 10
+```py3
+    room_max_size = 10
     room_min_size = 6
-    max_rooms = 30</span>
-
-    tileset = tcod.tileset.load_tilesheet(
-    ...</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
+    max_rooms = 30
+```
 
 At long last, it's time to modify `generate_dungeon` to, well, generate our dungeon\! You can completely remove our old implementation and replace it with the following:
 
 {{< codetab >}} {{< diff-tab >}} {{< highlight diff >}}
 from __future__ import annotations
 
+-from typing import TYPE_CHECKING, Iterator, Tuple
++from typing import TYPE_CHECKING, Iterator, List, Tuple
 import random
--from typing import Iterator, Tuple
-+from typing import Iterator, List, Tuple, TYPE_CHECKING
 
-from game_map import GameMap
-import tile_types
+import tcod
 
+from game.game_map import GameMap
+from game.tiles import floor
 
-+if TYPE_CHECKING:
-+   from entity import Entity
+if TYPE_CHECKING:
+    import game.engine
 
 ...
 
--def generate_dungeon(map_width, map_height) -> GameMap:
--   dungeon = GameMap(map_width, map_height)
+-def generate_dungeon(
+-   map_width: int,
+-   map_height: int,
+-   engine: game.engine.Engine,
+-) -> GameMap:
+-   """Generate a new dungeon map."""
+-   dungeon = GameMap(engine, map_width, map_height)
 
 -   room_1 = RectangularRoom(x=20, y=15, width=10, height=15)
 -   room_2 = RectangularRoom(x=35, y=15, width=10, height=15)
 
--   dungeon.tiles[room_1.inner] = tile_types.floor
--   dungeon.tiles[room_2.inner] = tile_types.floor
+-   dungeon.tiles[room_1.inner] = floor
+-   dungeon.tiles[room_2.inner] = floor
 
--   create_horizontal_tunnel(dungeon, 25, 40, 23)
+-   for x, y in tunnel_between(room_2.center, room_1.center):
+-       dungeon.tiles[x, y] = floor
 
 -   return dungeon
 
@@ -559,14 +646,15 @@ import tile_types
 +   room_max_size: int,
 +   map_width: int,
 +   map_height: int,
-+   player: Entity,
-+) -> GameMap:
++   engine: game.engine.Engine,
++) -> game.game_map.GameMap:
 +   """Generate a new dungeon map."""
-+   dungeon = GameMap(map_width, map_height)
++   player = engine.player
++   dungeon = GameMap(engine, map_width, map_height)
 
 +   rooms: List[RectangularRoom] = []
 
-+   for r in range(max_rooms):
++   for _ in range(max_rooms):
 +       room_width = random.randint(room_min_size, room_max_size)
 +       room_height = random.randint(room_min_size, room_max_size)
 
@@ -582,15 +670,15 @@ import tile_types
 +       # If there are no intersections then the room is valid.
 
 +       # Dig out this rooms inner area.
-+       dungeon.tiles[new_room.inner] = tile_types.floor
++       dungeon.tiles[new_room.inner] = floor
 
 +       if len(rooms) == 0:
 +           # The first room, where the player starts.
-+           player.x, player.y = new_room.center
++           player.place(*new_room.center, dungeon)
 +       else:  # All rooms after the first.
 +           # Dig out a tunnel between this room and the previous one.
 +           for x, y in tunnel_between(rooms[-1].center, new_room.center):
-+               dungeon.tiles[x, y] = tile_types.floor
++               dungeon.tiles[x, y] = floor
 
 +       # Finally, append the new room to the list.
 +       rooms.append(new_room)
@@ -601,29 +689,36 @@ import tile_types
 {{< original-tab >}}
 <pre>from __future__ import annotations
 
-import random
-<span class="crossed-out-text">from typing import Iterator, Tuple</span>
-<span class="new-text">from typing import Iterator, List, Tuple, TYPE_CHECKING</span>
+<span class="crossed-out-text">from typing import TYPE_CHECKING, Iterator, Tuple</span>
+<span class="new-text">from typing import TYPE_CHECKING, Iterator, List, Tuple
+import random</span>
 
-from game_map import GameMap
-import tile_types
+import tcod
 
+from game.game_map import GameMap
+from game.tiles import floor
 
-<span class="new-text">if TYPE_CHECKING:
-    from entity import Entity</span>
+if TYPE_CHECKING:
+    import game.engine</span>
 
 ...
 
-<span class="crossed-out-text">def generate_dungeon(map_width, map_height) -> GameMap:</span>
-    <span class="crossed-out-text">dungeon = GameMap(map_width, map_height)</span>
+<span class="crossed-out-text">def generate_dungeon(</span>
+    <span class="crossed-out-text">map_width: int,</span>
+    <span class="crossed-out-text">map_height: int,</span>
+    <span class="crossed-out-text">engine: game.engine.Engine,</span>
+<span class="crossed-out-text">) -> GameMap:</span>
+    <span class="crossed-out-text">"""Generate a new dungeon map."""</span>
+    <span class="crossed-out-text">dungeon = GameMap(engine, map_width, map_height)</span>
 
     <span class="crossed-out-text">room_1 = RectangularRoom(x=20, y=15, width=10, height=15)</span>
     <span class="crossed-out-text">room_2 = RectangularRoom(x=35, y=15, width=10, height=15)</span>
 
-    <span class="crossed-out-text">dungeon.tiles[room_1.inner] = tile_types.floor</span>
-    <span class="crossed-out-text">dungeon.tiles[room_2.inner] = tile_types.floor</span>
+    <span class="crossed-out-text">dungeon.tiles[room_1.inner] = floor</span>
+    <span class="crossed-out-text">dungeon.tiles[room_2.inner] = floor</span>
 
-    <span class="crossed-out-text">create_horizontal_tunnel(dungeon, 25, 40, 23)</span>
+    <span class="crossed-out-text">for x, y in tunnel_between(room_2.center, room_1.center):</span>
+        <span class="crossed-out-text">dungeon.tiles[x, y] = floor</span>
 
     <span class="crossed-out-text">return dungeon</span>
 
@@ -634,14 +729,15 @@ import tile_types
     room_max_size: int,
     map_width: int,
     map_height: int,
-    player: Entity,
-) -> GameMap:
+    engine: game.engine.Engine,
+) -> game.game_map.GameMap:
     """Generate a new dungeon map."""
-    dungeon = GameMap(map_width, map_height)
+    player = engine.player
+    dungeon = GameMap(engine, map_width, map_height)
 
     rooms: List[RectangularRoom] = []
 
-    for r in range(max_rooms):
+    for _ in range(max_rooms):
         room_width = random.randint(room_min_size, room_max_size)
         room_height = random.randint(room_min_size, room_max_size)
 
@@ -657,15 +753,15 @@ import tile_types
         # If there are no intersections then the room is valid.
 
         # Dig out this rooms inner area.
-        dungeon.tiles[new_room.inner] = tile_types.floor
+        dungeon.tiles[new_room.inner] = floor
 
         if len(rooms) == 0:
             # The first room, where the player starts.
-            player.x, player.y = new_room.center
+            player.place(*new_room.center, dungeon)
         else:  # All rooms after the first.
             # Dig out a tunnel between this room and the previous one.
             for x, y in tunnel_between(rooms[-1].center, new_room.center):
-                dungeon.tiles[x, y] = tile_types.floor
+                dungeon.tiles[x, y] = floor
 
         # Finally, append the new room to the list.
         rooms.append(new_room)
@@ -741,7 +837,7 @@ So what happens if a room *does* intersect with another? In that case, we can ju
         # If there are no intersections then the room is valid.
 
         # Dig out this rooms inner area.
-        dungeon.tiles[new_room.inner] = tile_types.floor
+        dungeon.tiles[new_room.inner] = floor
 ```
 
 Here, we "dig" the room out. This is similar to what we were doing before to dig out the two connected rooms.
@@ -758,7 +854,7 @@ We put our player down in the center of the first room we created. If this room 
         else:  # All rooms after the first.
             # Dig out a tunnel between this room and the previous one.
             for x, y in tunnel_between(rooms[-1].center, new_room.center):
-                dungeon.tiles[x, y] = tile_types.floor
+                dungeon.tiles[x, y] = floor
 ```
 
 This is similar to how we dug the tunnel before, except this time, we're using a negative index with `rooms` to grab the previous room, and connecting the new room to it.
@@ -770,55 +866,16 @@ This is similar to how we dug the tunnel before, except this time, we're using a
 
 Regardless if it's the first room or not, we want to append it to the list, so the next iteration can use it.
 
-So that's our `generate_dungeon` function, but we're not quite finished yet. We need to modify the call we make to this function in `main.py`:
+So that's our `generate_dungeon` function. We already showed the updated `main.py` call earlier, where we pass all the required parameters including the engine instead of the player.
 
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-    ...
-    entities = {npc, player}
-
--   game_map = generate_dungeon(map_width, map_height)
-+   game_map = generate_dungeon(
-+       max_rooms=max_rooms,
-+       room_min_size=room_min_size,
-+       room_max_size=room_max_size,
-+       map_width=map_width,
-+       map_height=map_height,
-+       player=player
-+   )
-
-    engine = Engine(entities=entities, event_handler=event_handler, game_map=game_map, player=player)
-    ...
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>    ...
-    entities = {npc, player}
-
-    <span class="crossed-out-text">game_map = generate_dungeon(map_width, map_height)</span>
-    <span class="new-text">game_map = generate_dungeon(
-        max_rooms=max_rooms,
-        room_min_size=room_min_size,
-        room_max_size=room_max_size,
-        map_width=map_width,
-        map_height=map_height,
-        player=player
-    )</span>
-
-    engine = Engine(entities=entities, event_handler=event_handler, game_map=game_map, player=player)
-    ...</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-And that's it\! There's our functioning, albeit basic, dungeon generation algorithm. Run the project now and you should be placed in a procedurally generated dungeon\! Note that our NPC isn't being placed intelligently here, so it may or may not be stuck in a wall.
+And that's it\! There's our functioning, albeit basic, dungeon generation algorithm. Run the project now and you should be placed in a procedurally generated dungeon\!
 
 ![Part 3 - Generated Dungeon](images/part-3-dungeon.png)
 
 *Note: Your dungeon will look different from this one, so don't worry if it doesn't match the screenshot.*
 
 If you want to see the code so far in its entirety, [click
-here](https://github.com/TStand90/tcod_tutorial_v2/tree/2020/part-3).
+here](https://github.com/jmccardle/tcod_tutorial_v2/tree/part-03).
 
 [Click here to move on to the next part of this
-tutorial.](/tutorials/tcod/v2/part-4)
+tutorial.](/tutorials/tcod/part-04)

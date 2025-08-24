@@ -190,7 +190,9 @@ wall = new_tile(
 )
 ```
 
-Finally, we add `light` to both the `floor` and `wall` tiles. We also modify the functions to fit a bit better on the screen, adding new lines after each argument. This is just for the sake of readability.
+The `floor` is both `walkable` and `transparent`. Its `dark` and `light` attributes define how it looks out of and in the field of view respectively. The `light` version has a warmer, yellow-ish tone to show it's visible.
+
+The `wall` is neither `walkable` nor `transparent`, with different colors for its `dark` and `light` states.
 
 `light` in both cases is set to a brighter color, so that when we draw the field of view to the screen, the player can easily differentiate between what's in view and what's not. As usual, feel free to play with the color schemes to match whatever you might have in mind.
 
