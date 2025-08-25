@@ -247,10 +247,16 @@ It keeps a list of the `Message`s received. Nothing too complex here.
 
 ```py3
     def add_message(
-        self, text: str, fg: Tuple[int, int, int] = color.white, *, stack: bool = True,
+        self,
+        text: str,
+        fg: Tuple[int, int, int] = white,
+        *,
+        stack: bool = True,
     ) -> None:
         """Add a message to this log.
+
         `text` is the message text, `fg` is the text color.
+
         If `stack` is True then the message can stack with a previous message
         of the same text.
         """
@@ -297,17 +303,18 @@ If we are allowing stacking, and the added message matches the previous message,
                     return  # No more space to print messages.
 ```
 
-This `render` calls `render_messages`, which is a static method that actually renders the messages to the screen. It renders them in reverse order, to make it appear that the messages are scrolling in an upwards direction. We use the `textwrap.wrap` function to wrap the text to fit within the given area, and then print each line to the console. We can only print so many messages to the console, however, so if `y_offset` reaches -1, we stop.
+This `render` calls `render_messages`, which is a class method that actually renders the messages to the screen. It renders them in reverse order, to make it appear that the messages are scrolling in an upwards direction. We use the `wrap` method to wrap the text to fit within the given area, and then print each line to the console. We can only print so many messages to the console, however, so if `y_offset` reaches -1, we stop.
 
-To utilize the message log, we'll first need to add it to the `Engine` class. Modify `engine.py` like this:
+To utilize the message log, we'll first need to add it to the `Engine` class. We'll also move the welcome message here. Modify `game/engine.py` like this:
 
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
 ...
-from input_handlers import MainGameEventHandler
-+from message_log import MessageLog
-from render_functions import render_bar
++from game.color import welcome_text
+from game.entity import Actor
++from game.message_log import MessageLog
+from game.render_functions import render_bar
 
 if TYPE_CHECKING:
     from entity import Actor
@@ -318,9 +325,9 @@ class Engine:
     game_map: GameMap
 
     def __init__(self, player: Actor):
-        self.event_handler: EventHandler = MainGameEventHandler(self)
-+       self.message_log = MessageLog()
         self.player = player
++       self.message_log = MessageLog()
++       self.message_log.add_message("Hello and welcome, adventurer, to yet another dungeon!", welcome_text)
     ...
 
     def render(self, console: Console, context: Context) -> None:
@@ -362,9 +369,9 @@ class Engine:
 {{</ original-tab >}}
 {{</ codetab >}}
 
-We're adding an instance of `MessageLog` in the initializer, and rendering the log in the Engine's `render` method. Nothing too complicated here.
+We're adding an instance of `MessageLog` in the initializer along with a welcome message, and rendering the log in the Engine's `render` method. Nothing too complicated here.
 
-We need to make a small change to `main.py` in order to actually make room for our message log. We can also add a friendly welcome message here.
+We need to make a small change to `main.py` in order to actually make room for our message log.
 
 {{< codetab >}}
 {{< diff-tab >}}
@@ -374,9 +381,8 @@ import copy
 
 import tcod
 
-+import color
-from engine import Engine
-import entity_factories
+from game.engine import Engine
+import game.entity_factories
 ...
 
     ...
@@ -390,9 +396,8 @@ import entity_factories
     ...
     engine.update_fov()
 
-+   engine.message_log.add_message(
-+       "Hello and welcome, adventurer, to yet another dungeon!", color.welcome_text
-+   )
+    # Part 10 refactoring: Track handler in main loop
+    handler: BaseEventHandler = MainGameEventHandler(engine)
 
     with tcod.context.new_terminal(
         ...
@@ -404,9 +409,8 @@ import copy
 
 import tcod
 
-<span class="new-text">import color</span>
-from engine import Engine
-import entity_factories
+from game.engine import Engine
+import game.entity_factories
 ...
 
     ...
@@ -420,9 +424,8 @@ import entity_factories
     ...
     engine.update_fov()
 
-    <span class="new-text">engine.message_log.add_message(
-        "Hello and welcome, adventurer, to yet another dungeon!", color.welcome_text
-    )</span>
+    # Part 10 refactoring: Track handler in main loop
+    handler: BaseEventHandler = MainGameEventHandler(engine)
 
     with tcod.context.new_terminal(
         ...</pre>
@@ -439,7 +442,7 @@ Run the project, and you should see the welcome message.
 
 Now that we've confirmed our message log accepts and displays messages, we'll need to replace all of our previous `print` statements to push messages to the log instead.
 
-Let's start with our attack action, in `actions.py`:
+Let's start with our attack action, in `game/actions.py`:
 
 {{< codetab >}}
 {{< diff-tab >}}
@@ -447,68 +450,70 @@ Let's start with our attack action, in `actions.py`:
 ...
 from typing import Optional, Tuple, TYPE_CHECKING
 
-+import color
++from game.color import enemy_atk, player_atk
++from game.entity import Actor
 
 if TYPE_CHECKING:
     ...
 
         ...
+        # Type checking to ensure both entities are Actors with fighter components
+        assert isinstance(self.entity, Actor), "Attacker must be an Actor"
+        assert isinstance(target, Actor), "Target must be an Actor"
+
         damage = self.entity.fighter.power - target.fighter.defense
 
         attack_desc = f"{self.entity.name.capitalize()} attacks {target.name}"
 +       if self.entity is self.engine.player:
-+           attack_color = color.player_atk
++           attack_color = player_atk
 +       else:
-+           attack_color = color.enemy_atk
++           attack_color = enemy_atk
 
         if damage > 0:
 -           print(f"{attack_desc} for {damage} hit points.")
-+           self.engine.message_log.add_message(
-+               f"{attack_desc} for {damage} hit points.", attack_color
-+           )
++           self.engine.message_log.add_message(f"{attack_desc} for {damage} hit points.", attack_color)
             target.fighter.hp -= damage
         else:
 -           print(f"{attack_desc} but does no damage.")
-+           self.engine.message_log.add_message(
-+               f"{attack_desc} but does no damage.", attack_color
-+           )
++           self.engine.message_log.add_message(f"{attack_desc} but does no damage.", attack_color)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>...
 from typing import Optional, Tuple, TYPE_CHECKING
 
-<span class="new-text">import color</span>
+<span class="new-text">from game.color import enemy_atk, player_atk
+from game.entity import Actor</span>
 
 if TYPE_CHECKING:
     ...
 
         ...
-        damage = self.entity.fighter.power - target.fighter.defense
+        <span class="new-text"># Type checking to ensure both entities are Actors with fighter components
+        assert isinstance(self.entity, Actor), "Attacker must be an Actor"
+        assert isinstance(target, Actor), "Target must be an Actor"
+
+        </span>damage = self.entity.fighter.power - target.fighter.defense
 
         attack_desc = f"{self.entity.name.capitalize()} attacks {target.name}"
         <span class="new-text">if self.entity is self.engine.player:
-            attack_color = color.player_atk
+            attack_color = player_atk
         else:
-            attack_color = color.enemy_atk</span>
+            attack_color = enemy_atk</span>
 
         if damage > 0:
             <span class="crossed-out-text">print(f"{attack_desc} for {damage} hit points.")</span>
-            <span class="new-text">self.engine.message_log.add_message(
-                f"{attack_desc} for {damage} hit points.", attack_color
-            )</span>
+            <span class="new-text">self.engine.message_log.add_message(f"{attack_desc} for {damage} hit points.", attack_color)</span>
             target.fighter.hp -= damage
         else:
             <span class="crossed-out-text">print(f"{attack_desc} but does no damage.")</span>
-            <span class="new-text">self.engine.message_log.add_message(
-                f"{attack_desc} but does no damage.", attack_color
-            )</span></pre>
+            <span class="new-text">self.engine.message_log.add_message(f"{attack_desc} but does no damage.", attack_color)</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
 We determine the color based on who is doing the attacking. Other than that, there's really nothing new here, we're just pushing those messages to the log rather than printing them.
 
-Now we just need to update our death messages. Open up `fighter.py` and modify it like this:
+Now we just need to update our death messages. Open up `game/components/fighter.py` and modify it like this:
 
 {{< codetab >}}
 {{< diff-tab >}}
@@ -517,26 +522,27 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-+import color
-from components.base_component import BaseComponent
++from game.color import enemy_die, player_die
+from game.components.base_component import BaseComponent
 ...
 
     ...
     def die(self) -> None:
-        if self.engine.player is self.entity:
+        if self.engine.player is self.parent:
             death_message = "You died!"
-+           death_message_color = color.player_die
-            self.engine.event_handler = GameOverEventHandler(self.engine)
++           death_message_color = player_die
+            # Part 10 refactoring: Don't set event_handler here
+            # GameOverEventHandler will be returned in handle_action
         else:
-            death_message = f"{self.entity.name} is dead!"
-+           death_message_color = color.enemy_die
+            death_message = f"{self.parent.name} is dead!"
++           death_message_color = enemy_die
 
-        self.entity.char = "%"
-        self.entity.color = (191, 0, 0)
-        self.entity.blocks_movement = False
-        self.entity.ai = None
-        self.entity.name = f"remains of {self.entity.name}"
-        self.entity.render_order = RenderOrder.CORPSE
+        self.parent.char = "%"
+        self.parent.color = (191, 0, 0)
+        self.parent.blocks_movement = False
+        self.parent.ai = None
+        self.parent.name = f"remains of {self.parent.name}"
+        self.parent.render_order = RenderOrder.CORPSE
 
 -       print(death_message)
 +       self.engine.message_log.add_message(death_message, death_message_color)
@@ -547,26 +553,27 @@ from components.base_component import BaseComponent
 
 from typing import TYPE_CHECKING
 
-<span class="new-text">import color</span>
-from components.base_component import BaseComponent
+<span class="new-text">from game.color import enemy_die, player_die</span>
+from game.components.base_component import BaseComponent
 ...
 
     ...
     def die(self) -> None:
-        if self.engine.player is self.entity:
+        if self.engine.player is self.parent:
             death_message = "You died!"
-            <span class="new-text">death_message_color = color.player_die</span>
-            self.engine.event_handler = GameOverEventHandler(self.engine)
+            <span class="new-text">death_message_color = player_die</span>
+            # Part 10 refactoring: Don't set event_handler here
+            # GameOverEventHandler will be returned in handle_action
         else:
-            death_message = f"{self.entity.name} is dead!"
-            <span class="new-text">death_message_color = color.enemy_die</span>
+            death_message = f"{self.parent.name} is dead!"
+            <span class="new-text">death_message_color = enemy_die</span>
 
-        self.entity.char = "%"
-        self.entity.color = (191, 0, 0)
-        self.entity.blocks_movement = False
-        self.entity.ai = None
-        self.entity.name = f"remains of {self.entity.name}"
-        self.entity.render_order = RenderOrder.CORPSE
+        self.parent.char = "%"
+        self.parent.color = (191, 0, 0)
+        self.parent.blocks_movement = False
+        self.parent.ai = None
+        self.parent.name = f"remains of {self.parent.name}"
+        self.parent.render_order = RenderOrder.CORPSE
 
         <span class="crossed-out-text">print(death_message)</span>
         <span class="new-text">self.engine.message_log.add_message(death_message, death_message_color)</span></pre>
@@ -581,61 +588,67 @@ What next? One thing that would be nice is to see the names of the different ent
 
 We can accomplish this by displaying the names of the entities that are currently under the player's mouse. We'll need to make a few changes to our project to capture the mouse's current position, however.
 
-Edit `main.py` like this:
+With our architecture, the handler is now responsible for rendering. Edit `main.py` like this:
 
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
         root_console = tcod.Console(screen_width, screen_height, order="F")
         while True:
-+           root_console.clear()
-+           engine.event_handler.on_render(console=root_console)
-+           context.present(root_console)
--           engine.render(console=root_console, context=context)
+            root_console.clear()
+            handler.on_render(console=root_console)
+            context.present(root_console)
 
-+           engine.event_handler.handle_events(context)
--           engine.event_handler.handle_events()
+            # Part 10 refactoring: Handler manages its own state transitions
+            for event in tcod.event.wait():
+                # libtcodpy deprecation: convert mouse events
+                if isinstance(event, tcod.event.MouseMotion):
+                    event = context.convert_event(event)
+                handler = handler.handle_events(event)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>        root_console = tcod.Console(screen_width, screen_height, order="F")
         while True:
-            <span class="new-text">root_console.clear()
-            engine.event_handler.on_render(console=root_console)
-            context.present(root_console)</span>
-            <span class="crossed-out-text">engine.render(console=root_console, context=context)</span>
+            root_console.clear()
+            handler.on_render(console=root_console)
+            context.present(root_console)
 
-            <span class="new-text">engine.event_handler.handle_events(context)</span>
-            <span class="crossed-out-text">engine.event_handler.handle_events()</span></pre>
+            # Part 10 refactoring: Handler manages its own state transitions
+            for event in tcod.event.wait():
+                # libtcodpy deprecation: convert mouse events
+                if isinstance(event, tcod.event.MouseMotion):
+                    event = context.convert_event(event)
+                handler = handler.handle_events(event)</pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
-We're adding the console's `clear` back to main, as well as the context's `present`. Also, we're calling a method that we haven't defined yet: `on_render`, but don't worry, we'll define it in a moment. Basically, this method tells the engine to render.
+We're adding the console's `clear` back to main, as well as the context's `present`. We're calling `on_render` on the handler, which tells the engine to render. We've also restructured the event handling to support the handler state management pattern we set up in Part 10, where the handler can return a new handler to switch states.
 
-We're also passing the `context` to `handle_events` now, because we need to call an extra method on it to capture the mouse input.
+We're also converting mouse events to capture tile position information.
 
-Now let's modify `input_handlers.py` to contain the methods we're calling in `main.py`:
+Now let's modify `game/input_handlers.py` to support the rendering and mouse tracking:
 
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-class EventHandler(tcod.event.EventDispatch[Action]):
+class EventHandler:
     def __init__(self, engine: Engine):
         self.engine = engine
 
--   def handle_events(self) -> None:
--       raise NotImplementedError()
-
-+   def handle_events(self, context: tcod.context.Context) -> None:
-+       for event in tcod.event.wait():
-+           context.convert_event(event)
-+           self.dispatch(event)
+    def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
+        """Handle events and return the next event handler."""
+        raise NotImplementedError()
 
     def ev_quit(self, event: tcod.event.Quit) -> Optional[Action]:
         raise SystemExit()
 
 +   def on_render(self, console: tcod.Console) -> None:
 +       self.engine.render(console)
+
++   def ev_mousemotion(self, event: tcod.event.MouseMotion) -> None:
++       if self.engine.game_map.in_bounds(int(event.position.x), int(event.position.y)):
++           self.engine.mouse_location = int(event.position.x), int(event.position.y)
 
 
 class MainGameEventHandler(EventHandler):
@@ -771,10 +784,10 @@ class Engine:
     game_map: GameMap
 
     def __init__(self, player: Actor):
-        self.event_handler: EventHandler = MainGameEventHandler(self)
-        self.message_log = MessageLog()
-+       self.mouse_location = (0, 0)
         self.player = player
++       self.mouse_location = (0, 0)
+        self.message_log = MessageLog()
+        self.message_log.add_message("Hello and welcome, adventurer, to yet another dungeon!", welcome_text)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
@@ -782,10 +795,10 @@ class Engine:
     game_map: GameMap
 
     def __init__(self, player: Actor):
-        self.event_handler: EventHandler = MainGameEventHandler(self)
-        self.message_log = MessageLog()
+        self.player = player
         <span class="new-text">self.mouse_location = (0, 0)</span>
-        self.player = player</pre>
+        self.message_log = MessageLog()
+        self.message_log.add_message("Hello and welcome, adventurer, to yet another dungeon!", welcome_text)</pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -806,8 +819,8 @@ class EventHandler(tcod.event.EventDispatch[Action]):
             self.dispatch(event)
 
 +   def ev_mousemotion(self, event: tcod.event.MouseMotion) -> None:
-+       if self.engine.game_map.in_bounds(event.tile.x, event.tile.y):
-+           self.engine.mouse_location = event.tile.x, event.tile.y
++       if self.engine.game_map.in_bounds(int(event.position.x), int(event.position.y)):
++           self.engine.mouse_location = int(event.position.x), int(event.position.y)
 
     def ev_quit(self, event: tcod.event.Quit) -> Optional[Action]:
         raise SystemExit()
@@ -824,8 +837,8 @@ class EventHandler(tcod.event.EventDispatch[Action]):
             self.dispatch(event)
 
     <span class="new-text">def ev_mousemotion(self, event: tcod.event.MouseMotion) -> None:
-        if self.engine.game_map.in_bounds(event.tile.x, event.tile.y):
-            self.engine.mouse_location = event.tile.x, event.tile.y</span>
+        if self.engine.game_map.in_bounds(int(event.position.x), int(event.position.y)):
+            self.engine.mouse_location = int(event.position.x), int(event.position.y)</span>
 
     def ev_quit(self, event: tcod.event.Quit) -> Optional[Action]:
         raise SystemExit()</pre>
@@ -834,7 +847,7 @@ class EventHandler(tcod.event.EventDispatch[Action]):
 
 Great! Now we're saving the mouse's location, so it's time to actually make use of it. Our original goal was to display the entity names that are in the mouse's current position. The hard part is already done, now all we need to do is check which entities are in the given location, get their names, and print them out to the screen.
 
-Since this has to do with rendering, let's put these new functions in `render_functions.py`:
+Since this has to do with rendering, let's put these new functions in `game/render_functions.py`:
 
 {{< codetab >}}
 {{< diff-tab >}}
@@ -846,18 +859,15 @@ from typing import TYPE_CHECKING
 import color
 
 if TYPE_CHECKING:
-    from tcod import Console
-+   from engine import Engine
-+   from game_map import GameMap
+    import game.engine
+    import game.game_map
 
 
-+def get_names_at_location(x: int, y: int, game_map: GameMap) -> str:
++def get_names_at_location(x: int, y: int, game_map: game.game_map.GameMap) -> str:
 +   if not game_map.in_bounds(x, y) or not game_map.visible[x, y]:
 +       return ""
 
-+   names = ", ".join(
-+       entity.name for entity in game_map.entities if entity.x == x and entity.y == y
-+   )
++   names = ", ".join(entity.name for entity in game_map.entities if entity.x == x and entity.y == y)
 
 +   return names.capitalize()
 
@@ -879,14 +889,10 @@ def render_bar(
     )
 
 
-+def render_names_at_mouse_location(
-+   console: Console, x: int, y: int, engine: Engine
-+) -> None:
++def render_names_at_mouse_location(console: tcod.console.Console, x: int, y: int, engine: game.engine.Engine) -> None:
 +   mouse_x, mouse_y = engine.mouse_location
 
-+   names_at_mouse_location = get_names_at_location(
-+       x=mouse_x, y=mouse_y, game_map=engine.game_map
-+   )
++   names_at_mouse_location = get_names_at_location(x=mouse_x, y=mouse_y, game_map=engine.game_map)
 
 +   console.print(x=x, y=y, string=names_at_mouse_location)
 {{</ highlight >}}
@@ -896,50 +902,44 @@ def render_bar(
 
 from typing import TYPE_CHECKING
 
-import color
+import tcod
+
+from game.color import bar_empty, bar_filled, bar_text
 
 if TYPE_CHECKING:
-    from tcod import Console
-    <span class="new-text">from engine import Engine
-    from game_map import GameMap
+    <span class="new-text">import game.engine
+    import game.game_map
 
 
-def get_names_at_location(x: int, y: int, game_map: GameMap) -> str:
+def get_names_at_location(x: int, y: int, game_map: game.game_map.GameMap) -> str:
     if not game_map.in_bounds(x, y) or not game_map.visible[x, y]:
         return ""
 
-    names = ", ".join(
-        entity.name for entity in game_map.entities if entity.x == x and entity.y == y
-    )
+    names = ", ".join(entity.name for entity in game_map.entities if entity.x == x and entity.y == y)
 
     return names.capitalize()</span>
 
 
 def render_bar(
-    console: Console, current_value: int, maximum_value: int, total_width: int
+    console: tcod.console.Console,
+    current_value: int,
+    maximum_value: int,
+    total_width: int,
 ) -> None:
     bar_width = int(float(current_value) / maximum_value * total_width)
 
-    console.draw_rect(x=0, y=45, width=20, height=1, ch=1, bg=color.bar_empty)
+    console.draw_rect(x=0, y=45, width=20, height=1, ch=1, bg=bar_empty)
 
     if bar_width > 0:
-        console.draw_rect(
-            x=0, y=45, width=bar_width, height=1, ch=1, bg=color.bar_filled
-        )
+        console.draw_rect(x=0, y=45, width=bar_width, height=1, ch=1, bg=bar_filled)
 
-    console.print(
-        x=1, y=45, string=f"HP: {current_value}/{maximum_value}", fg=color.bar_text
-    )
+    console.print(x=1, y=45, string=f"HP: {current_value}/{maximum_value}", fg=bar_text)
 
 
-<span class="new-text">def render_names_at_mouse_location(
-    console: Console, x: int, y: int, engine: Engine
-) -> None:
+<span class="new-text">def render_names_at_mouse_location(console: tcod.console.Console, x: int, y: int, engine: game.engine.Engine) -> None:
     mouse_x, mouse_y = engine.mouse_location
 
-    names_at_mouse_location = get_names_at_location(
-        x=mouse_x, y=mouse_y, game_map=engine.game_map
-    )
+    names_at_mouse_location = get_names_at_location(x=mouse_x, y=mouse_y, game_map=engine.game_map)
 
     console.print(x=x, y=y, string=names_at_mouse_location)</span></pre>
 {{</ original-tab >}}
@@ -951,14 +951,14 @@ We've added two new functions, `render_names_at_mouse_location` and `get_names_a
 
 `get_names_at_location` also takes "x" and "y" variables, though these represent a spot on the map. We first check that the x and y coordinates are within the map, and are currently visible to the player. If they are, then we create a string of the entity names at that spot, separated by a comma. We then return that string, adding `capitalize` to make sure the first letter in the string is capitalized.
 
-Now all we need to do is modify `engine.py` to import these functions and utilize them in the `render` method. Make the following modifications:
+Now all we need to do is modify `game/engine.py` to import these functions and utilize them in the `render` method. Make the following modifications:
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
 ...
-from message_log import MessageLog
--from render_functions import render_bar
-+from render_functions import render_bar, render_names_at_mouse_location
+from game.message_log import MessageLog
+-from game.render_functions import render_bar
++from game.render_functions import render_bar, render_names_at_mouse_location
 
 if TYPE_CHECKING:
     ...
@@ -1009,7 +1009,7 @@ Now if you hover your mouse over an entity, you'll see its name. If you stack a 
 
 We're almost finished with this chapter. Before we wrap up, let's revisit our message log for a moment. One issue with it is that we can't see messages that are too far back. However, HexDecimal was kind enough to provide a method for viewing the whole log, with the ability to scroll.
 
-Add the following to `input_handlers.py`:
+Add the following to `game/input_handlers.py`:
 
 {{< codetab >}}
 {{< diff-tab >}}
@@ -1018,32 +1018,22 @@ class GameOverEventHandler(EventHandler):
     ...
 
 
-+CURSOR_Y_KEYS = {
-+   tcod.event.K_UP: -1,
-+   tcod.event.K_DOWN: 1,
-+   tcod.event.K_PAGEUP: -10,
-+   tcod.event.K_PAGEDOWN: 10,
-+}
-
-
 +class HistoryViewer(EventHandler):
 +   """Print the history on a larger window which can be navigated."""
 
-+   def __init__(self, engine: Engine):
++   def __init__(self, engine: game.engine.Engine):
 +       super().__init__(engine)
 +       self.log_length = len(engine.message_log.messages)
 +       self.cursor = self.log_length - 1
 
-+   def on_render(self, console: tcod.Console) -> None:
++   def on_render(self, console: tcod.console.Console) -> None:
 +       super().on_render(console)  # Draw the main state as the background.
 
-+       log_console = tcod.Console(console.width - 6, console.height - 6)
++       log_console = tcod.console.Console(console.width - 6, console.height - 6)
 
 +       # Draw a frame with a custom banner title.
 +       log_console.draw_frame(0, 0, log_console.width, log_console.height)
-+       log_console.print_box(
-+           0, 0, log_console.width, 1, "┤Message history├", alignment=tcod.CENTER
-+       )
++       log_console.print_box(0, 0, log_console.width, 1, "┤Message history├", alignment=tcod.libtcodpy.CENTER)
 
 +       # Render the message log using the cursor parameter.
 +       self.engine.message_log.render_messages(
@@ -1056,25 +1046,19 @@ class GameOverEventHandler(EventHandler):
 +       )
 +       log_console.blit(console, 3, 3)
 
-+   def ev_keydown(self, event: tcod.event.KeyDown) -> None:
++   def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
 +       # Fancy conditional movement to make it feel right.
-+       if event.sym in CURSOR_Y_KEYS:
-+           adjust = CURSOR_Y_KEYS[event.sym]
-+           if adjust < 0 and self.cursor == 0:
-+               # Only move from the top to the bottom when you're on the edge.
-+               self.cursor = self.log_length - 1
-+           elif adjust > 0 and self.cursor == self.log_length - 1:
-+               # Same with bottom to top movement.
-+               self.cursor = 0
-+           else:
-+               # Otherwise move while staying clamped to the bounds of the history log.
-+               self.cursor = max(0, min(self.cursor + adjust, self.log_length - 1))
-+       elif event.sym == tcod.event.K_HOME:
-+           self.cursor = 0  # Move directly to the top message.
-+       elif event.sym == tcod.event.K_END:
-+           self.cursor = self.log_length - 1  # Move directly to the last message.
++       if event.sym in (tcod.event.KeySym.UP, tcod.event.KeySym.K):
++           self.cursor = max(0, self.cursor - 1)
++       elif event.sym in (tcod.event.KeySym.DOWN, tcod.event.KeySym.J):
++           self.cursor = min(self.log_length - 1, self.cursor + 1)
++       elif event.sym == tcod.event.KeySym.HOME:
++           self.cursor = 0
++       elif event.sym == tcod.event.KeySym.END:
++           self.cursor = self.log_length - 1
 +       else:  # Any other key moves back to the main game state.
-+           self.engine.event_handler = MainGameEventHandler(self.engine)
++           return MainGameEventHandler(self.engine)
++       return None
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
@@ -1082,32 +1066,22 @@ class GameOverEventHandler(EventHandler):
     ...
 
 
-<span class="new-text">CURSOR_Y_KEYS = {
-    tcod.event.K_UP: -1,
-    tcod.event.K_DOWN: 1,
-    tcod.event.K_PAGEUP: -10,
-    tcod.event.K_PAGEDOWN: 10,
-}
-
-
-class HistoryViewer(EventHandler):
+<span class="new-text">class HistoryViewer(EventHandler):
     """Print the history on a larger window which can be navigated."""
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: game.engine.Engine):
         super().__init__(engine)
         self.log_length = len(engine.message_log.messages)
         self.cursor = self.log_length - 1
 
-    def on_render(self, console: tcod.Console) -> None:
+    def on_render(self, console: tcod.console.Console) -> None:
         super().on_render(console)  # Draw the main state as the background.
 
-        log_console = tcod.Console(console.width - 6, console.height - 6)
+        log_console = tcod.console.Console(console.width - 6, console.height - 6)
 
         # Draw a frame with a custom banner title.
         log_console.draw_frame(0, 0, log_console.width, log_console.height)
-        log_console.print_box(
-            0, 0, log_console.width, 1, "┤Message history├", alignment=tcod.CENTER
-        )
+        log_console.print_box(0, 0, log_console.width, 1, "┤Message history├", alignment=tcod.libtcodpy.CENTER)
 
         # Render the message log using the cursor parameter.
         self.engine.message_log.render_messages(
@@ -1120,25 +1094,19 @@ class HistoryViewer(EventHandler):
         )
         log_console.blit(console, 3, 3)
 
-    def ev_keydown(self, event: tcod.event.KeyDown) -> None:
+    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
         # Fancy conditional movement to make it feel right.
-        if event.sym in CURSOR_Y_KEYS:
-            adjust = CURSOR_Y_KEYS[event.sym]
-            if adjust < 0 and self.cursor == 0:
-                # Only move from the top to the bottom when you're on the edge.
-                self.cursor = self.log_length - 1
-            elif adjust > 0 and self.cursor == self.log_length - 1:
-                # Same with bottom to top movement.
-                self.cursor = 0
-            else:
-                # Otherwise move while staying clamped to the bounds of the history log.
-                self.cursor = max(0, min(self.cursor + adjust, self.log_length - 1))
-        elif event.sym == tcod.event.K_HOME:
-            self.cursor = 0  # Move directly to the top message.
-        elif event.sym == tcod.event.K_END:
-            self.cursor = self.log_length - 1  # Move directly to the last message.
+        if event.sym in (tcod.event.KeySym.UP, tcod.event.KeySym.K):
+            self.cursor = max(0, self.cursor - 1)
+        elif event.sym in (tcod.event.KeySym.DOWN, tcod.event.KeySym.J):
+            self.cursor = min(self.log_length - 1, self.cursor + 1)
+        elif event.sym == tcod.event.KeySym.HOME:
+            self.cursor = 0
+        elif event.sym == tcod.event.KeySym.END:
+            self.cursor = self.log_length - 1
         else:  # Any other key moves back to the main game state.
-            self.engine.event_handler = MainGameEventHandler(self.engine)</span></pre>
+            return MainGameEventHandler(self.engine)
+        return None</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -1148,23 +1116,23 @@ To show this new view, all we need to do is this, in `MainGameEventHandler`:
 {{< diff-tab >}}
 {{< highlight diff >}}
         ...
-        elif key == tcod.event.K_ESCAPE:
+        elif key == tcod.event.KeySym.ESCAPE:
             action = EscapeAction(player)
-+       elif key == tcod.event.K_v:
-+           self.engine.event_handler = HistoryViewer(self.engine)
++       elif key == tcod.event.KeySym.V:
++           return HistoryViewer(self.engine)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>        ...
-        elif key == tcod.event.K_ESCAPE:
+        elif key == tcod.event.KeySym.ESCAPE:
             action = EscapeAction(player)
-        <span class="new-text">elif key == tcod.event.K_v:
-            self.engine.event_handler = HistoryViewer(self.engine)</span></pre>
+        <span class="new-text">elif key == tcod.event.KeySym.V:
+            return HistoryViewer(self.engine)</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
 Now all the player has to do is press the "v" key to see a log of all past messages. By using the up and down keys, you can scroll through the log.
 
-If you want to see the code so far in its entirety, [click here](https://github.com/TStand90/tcod_tutorial_v2/tree/2020/part-7).
+If you want to see the code so far in its entirety, [click here](https://github.com/jmccardle/tcod_tutorial_v2/tree/part-07).
 
-[Click here to move on to the next part of this tutorial.](/tutorials/tcod/v2/part-8)
+[Click here to move on to the next part of this tutorial.](/tutorials/tcod/part-08)
