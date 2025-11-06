@@ -58,7 +58,7 @@ class Impossible(Exception):
 {{</ original-tab >}}
 {{</ codetab >}}
 
-There's a bit of refactoring we can do to make things easier for ourselves in the future: By creating a base class that can be either an Action or an EventHandler, we don't need to set the engine's "event handler" to the new handler when we want to switch, we can just return that event handler instead. A benefit of this is that the `Engine` class won't need to store the event handler anymore. This works by keeping track of the handler in the `main.py` file instead, and switching it when necessary.
+Now we'll set up an event handler system that will make managing menus and game states much cleaner. By creating a base class that can return either an Action or an EventHandler, handlers can switch to each other simply by returning the next handler. This eliminates the need for the `Engine` class to manage event handlers directly - instead, we'll track the active handler in `main.py`, keeping a clear separation of concerns.
 
 To make the change, start by adding the following to `input_handlers.py`:
 
@@ -1121,7 +1121,7 @@ Let's break this code down a bit.
 background_image = tcod.image.load("menu_background.png")[:, :, :3]
 ```
 
-This line loads the image file we'll use for our background in the main menu. If you haven't already, be sure to download that file. You can find it [here](https://github.com/TStand90/tcod_tutorial_v2/blob/bff29c352d76068845730ff61e62cd382e5e2adc/menu_background.png), or download it by right-clicking and saving it from here:
+This line loads the image file we'll use for our background in the main menu. If you haven't already, be sure to download that file. You can find it [here](https://github.com/jmccardle/tcod_tutorial_v2/blob/part-10/menu_background.png), or download it by right-clicking and saving it from here:
 
 ![Main Menu Background Image](images/menu_background.png)
 
@@ -1751,6 +1751,6 @@ Last thing before we wrap up: We're creating the `.sav` files to represent our s
 
 _The rest of the .gitignore is omitted, as your .gitignore file may look different from mine. It doesn't matter where you add this in._
 
-If you want to see the code so far in its entirety, [click here](https://github.com/TStand90/tcod_tutorial_v2/tree/2020/part-10).
+If you want to see the code so far in its entirety, [click here](https://github.com/jmccardle/tcod_tutorial_v2/tree/part-10).
 
-[Click here to move on to the next part of this tutorial.](/tutorials/tcod/v2/part-11)
+[Click here to move on to the next part of this tutorial.](/tutorials/tcod/part-11)
