@@ -1,0 +1,12 @@
+baseURL = "https://jmccardle.github.io/"
+languageCode = "en-us"
+title = "John McCardle's Development Docs"
+
+[markup.highlight]
+  style = "monokai"
+  codeFences = true
+  noClasses = false
+
+[params]
+  customCSS = ["css/style.css"]
+  customJS = ["js/codetabs.js"]
