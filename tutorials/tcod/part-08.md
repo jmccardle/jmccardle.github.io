@@ -4,594 +4,12 @@ date: 2020-07-14
 draft: false
 ---
 
-## Quick refactors
-
-Once again, apologies to everyone reading this right now. After publishing the last two parts, there were once again a few refactors on code written in those parts, like at the beginning of part 6. Luckily, the changes are much less extensive this time.
-
-`ai.py`
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-...
-import numpy as np  # type: ignore
-import tcod
-
-from actions import Action, MeleeAction, MovementAction, WaitAction
--from components.base_component import BaseComponent
-
-if TYPE_CHECKING:
-    from entity import Actor
-
-
--class BaseAI(Action, BaseComponent):
-+class BaseAI(Action):
-    entity: Actor
-
-    def perform(self) -> None:
-        raise NotImplementedError()
-    ...
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>...
-import numpy as np  # type: ignore
-import tcod
-
-from actions import Action, MeleeAction, MovementAction, WaitAction
-<span class="crossed-out-text">from components.base_component import BaseComponent</span>
-
-if TYPE_CHECKING:
-    from entity import Actor
-
-
-<span class="crossed-out-text">class BaseAI(Action, BaseComponent):</span>
-<span class="new-text">class BaseAI(Action):</span>
-    <span class="crossed-out-text">entity: Actor</span>
-
-    def perform(self) -> None:
-        raise NotImplementedError()
-    ...</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-
-`message_log.py`
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-+from typing import Iterable, List, Reversible, Tuple
--from typing import List, Reversible, Tuple
-import textwrap
-
-import tcod
-
-import color
-...
-
-
-class MessageLog:
-    ...
-
-    def render(
-        self, console: tcod.Console, x: int, y: int, width: int, height: int,
-    ) -> None:
-        """Render this log over the given area.
-
-        `x`, `y`, `width`, `height` is the rectangular region to render onto
-        the `console`.
-        """
-        self.render_messages(console, x, y, width, height, self.messages)
-
-+   @staticmethod
-+   def wrap(string: str, width: int) -> Iterable[str]:
-+       """Return a wrapped text message."""
-+       for line in string.splitlines():  # Handle newlines in messages.
-+           yield from textwrap.wrap(
-+               line, width, expand_tabs=True,
-+           )
-
--   @staticmethod
-+   @classmethod
-    def render_messages(
-+       cls,
-        console: tcod.Console,
-        x: int,
-        y: int,
-        width: int,
-        height: int,
-        messages: Reversible[Message],
-    ) -> None:
-        """Render the messages provided.
-
-        The `messages` are rendered starting at the last message and working
-        backwards.
-        """
-        y_offset = height - 1
-
-        for message in reversed(messages):
--           for line in reversed(textwrap.wrap(message.full_text, width)):
-+           for line in reversed(list(cls.wrap(message.full_text, width))):
-                console.print(x=x, y=y + y_offset, string=line, fg=message.fg)
-                y_offset -= 1
-                if y_offset < 0:
-                    return  # No more space to print messages.
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre><span class="new-text">from typing import Iterable, List, Reversible, Tuple</span>
-<span class="crossed-out-text">from typing import List, Reversible, Tuple</span>
-import textwrap
-
-import tcod
-
-import color
-...
-
-
-class MessageLog:
-    ...
-
-    def render(
-        self, console: tcod.Console, x: int, y: int, width: int, height: int,
-    ) -> None:
-        """Render this log over the given area.
-
-        `x`, `y`, `width`, `height` is the rectangular region to render onto
-        the `console`.
-        """
-        self.render_messages(console, x, y, width, height, self.messages)
-
-    <span class="new-text">@staticmethod
-    def wrap(string: str, width: int) -> Iterable[str]:
-        """Return a wrapped text message."""
-        for line in string.splitlines():  # Handle newlines in messages.
-            yield from textwrap.wrap(
-                line, width, expand_tabs=True,
-            )</span>
-
-    <span class="crossed-out-text">@staticmethod</span>
-    <span class="new-text">@classmethod</span>
-    def render_messages(
-        <span class="new-text">cls,</span>
-        console: tcod.Console,
-        x: int,
-        y: int,
-        width: int,
-        height: int,
-        messages: Reversible[Message],
-    ) -> None:
-        """Render the messages provided.
-
-        The `messages` are rendered starting at the last message and working
-        backwards.
-        """
-        y_offset = height - 1
-
-        for message in reversed(messages):
-            <span class="crossed-out-text">for line in reversed(textwrap.wrap(message.full_text, width)):</span>
-            <span class="new-text">for line in reversed(list(cls.wrap(message.full_text, width))):</span>
-                console.print(x=x, y=y + y_offset, string=line, fg=message.fg)
-                y_offset -= 1
-                if y_offset < 0:
-                    return  # No more space to print messages.</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-`game_map.py`
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-class GameMap:
-    ...
-    )  # Tiles the player has seen before
-
-+   @property
-+   def gamemap(self) -> GameMap:
-+       return self
-
-     @property
-     def actors(self) -> Iterator[Actor]:
-        ...
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>class GameMap:
-    ...
-    )  # Tiles the player has seen before
-
-    <span class="new-text">@property
-    def gamemap(self) -> GameMap:
-        return self</span>
-
-     @property
-     def actors(self) -> Iterator[Actor]:
-        ...</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-`entity.py`
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-class Entity:
-    """
-    A generic object to represent players, enemies, items, etc.
-    """
-
--   gamemap: GameMap
-+   parent: GameMap
-
-    def __init__(
-        self,
--       gamemap: Optional[GameMap] = None,
-+       parent: Optional[GameMap] = None,
-        x: int = 0,
-        y: int = 0,
-        char: str = "?",
-        color: Tuple[int, int, int] = (255, 255, 255),
-        name: str = "<Unnamed>",
-        blocks_movement: bool = False,
-        render_order: RenderOrder = RenderOrder.CORPSE,
-    ):
-        self.x = x
-        self.y = y
-        self.char = char
-        self.color = color
-        self.name = name
-        self.blocks_movement = blocks_movement
-        self.render_order = render_order
--       if gamemap:
--           # If gamemap isn't provided now then it will be set later.
--           self.gamemap = gamemap
--           gamemap.entities.add(self)
-+       if parent:
-+           # If parent isn't provided now then it will be set later.
-+           self.parent = parent
-+           parent.entities.add(self)
-
-+   @property
-+   def gamemap(self) -> GameMap:
-+       return self.parent.gamemap
-
-    def spawn(self: T, gamemap: GameMap, x: int, y: int) -> T:
-        """Spawn a copy of this instance at the given location."""
-        clone = copy.deepcopy(self)
-        clone.x = x
-        clone.y = y
--       clone.gamemap = gamemap
-+       clone.parent = gamemap
-        gamemap.entities.add(clone)
-        return clone
-
-    def place(self, x: int, y: int, gamemap: Optional[GameMap] = None) -> None:
-        """Place this entity at a new location.  Handles moving across GameMaps."""
-        self.x = x
-        self.y = y
-        if gamemap:
--           if hasattr(self, "gamemap"):  # Possibly uninitialized.
--               self.gamemap.entities.remove(self)
--           self.gamemap = gamemap
-+           if hasattr(self, "parent"):  # Possibly uninitialized.
-+               if self.parent is self.gamemap:
-+                   self.gamemap.entities.remove(self)
-+           self.parent = gamemap
-            gamemap.entities.add(self)
-
-    def move(self, dx: int, dy: int) -> None:
-        # Move the entity by a given amount
-        self.x += dx
-        self.y += dy
-
-
-class Actor(Entity):
-    def __init__(
-        self,
-        *,
-        x: int = 0,
-        y: int = 0,
-        char: str = "?",
-        color: Tuple[int, int, int] = (255, 255, 255),
-        name: str = "<Unnamed>",
-        ai_cls: Type[BaseAI],
-        fighter: Fighter
-    ):
-        super().__init__(
-            x=x,
-            y=y,
-            char=char,
-            color=color,
-            name=name,
-            blocks_movement=True,
-            render_order=RenderOrder.ACTOR,
-        )
-
-        self.ai: Optional[BaseAI] = ai_cls(self)
-
-        self.fighter = fighter
--       self.fighter.entity = self
-+       self.fighter.parent = self
-
-    @property
-    def is_alive(self) -> bool:
-        """Returns True as long as this actor can perform actions."""
-        return bool(self.ai)
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>class Entity:
-    """
-    A generic object to represent players, enemies, items, etc.
-    """
-
-    <span class="crossed-out-text">gamemap: GameMap</span>
-    <span class="new-text">parent: GameMap</span>
-
-    def __init__(
-        self,
-        <span class="crossed-out-text">gamemap: Optional[GameMap] = None,</span>
-        <span class="new-text">parent: Optional[GameMap] = None,</span>
-        x: int = 0,
-        y: int = 0,
-        char: str = "?",
-        color: Tuple[int, int, int] = (255, 255, 255),
-        name: str = "&lt;Unnamed&gt;",
-        blocks_movement: bool = False,
-        render_order: RenderOrder = RenderOrder.CORPSE,
-    ):
-        self.x = x
-        self.y = y
-        self.char = char
-        self.color = color
-        self.name = name
-        self.blocks_movement = blocks_movement
-        self.render_order = render_order
-        <span class="crossed-out-text">if gamemap:</span>
-            <span class="crossed-out-text"># If gamemap isn't provided now then it will be set later.</span>
-            <span class="crossed-out-text">self.gamemap = gamemap</span>
-            <span class="crossed-out-text">gamemap.entities.add(self)</span>
-        <span class="new-text">if parent:
-            # If parent isn't provided now then it will be set later.
-            self.parent = parent
-            parent.entities.add(self)
-
-    @property
-    def gamemap(self) -> GameMap:
-        return self.parent.gamemap</span>
-
-    def spawn(self: T, gamemap: GameMap, x: int, y: int) -> T:
-        """Spawn a copy of this instance at the given location."""
-        clone = copy.deepcopy(self)
-        clone.x = x
-        clone.y = y
-        <span class="crossed-out-text">clone.gamemap = gamemap</span>
-        <span class="new-text">clone.parent = gamemap</span>
-        gamemap.entities.add(clone)
-        return clone
-
-    def place(self, x: int, y: int, gamemap: Optional[GameMap] = None) -> None:
-        """Place this entity at a new location.  Handles moving across GameMaps."""
-        self.x = x
-        self.y = y
-        if gamemap:
-            <span class="crossed-out-text">if hasattr(self, "gamemap"):  # Possibly uninitialized.</span>
-                <span class="crossed-out-text">self.gamemap.entities.remove(self)</span>
-            <span class="crossed-out-text">self.gamemap = gamemap</span>
-            <span class="new-text">if hasattr(self, "parent"):  # Possibly uninitialized.
-                if self.parent is self.gamemap:
-                    self.gamemap.entities.remove(self)
-            self.parent = gamemap</span>
-            gamemap.entities.add(self)
-
-    def move(self, dx: int, dy: int) -> None:
-        # Move the entity by a given amount
-        self.x += dx
-        self.y += dy
-
-
-class Actor(Entity):
-    def __init__(
-        self,
-        *,
-        x: int = 0,
-        y: int = 0,
-        char: str = "?",
-        color: Tuple[int, int, int] = (255, 255, 255),
-        name: str = "&lt;Unnamed&gt;",
-        ai_cls: Type[BaseAI],
-        fighter: Fighter
-    ):
-        super().__init__(
-            x=x,
-            y=y,
-            char=char,
-            color=color,
-            name=name,
-            blocks_movement=True,
-            render_order=RenderOrder.ACTOR,
-        )
-
-        self.ai: Optional[BaseAI] = ai_cls(self)
-
-        self.fighter = fighter
-        <span class="crossed-out-text">self.fighter.entity = self</span>
-        <span class="new-text">self.fighter.parent = self</span>
-
-    @property
-    def is_alive(self) -> bool:
-        """Returns True as long as this actor can perform actions."""
-        return bool(self.ai)</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-`base_component.py`
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from engine import Engine
-    from entity import Entity
-+   from game_map import GameMap
-
-
-class BaseComponent:
--   entity: Entity  # Owning entity instance.
-+   parent: Entity  # Owning entity instance.
-
-+   @property
-+   def gamemap(self) -> GameMap:
-+       return self.parent.gamemap
-
-    @property
-    def engine(self) -> Engine:
--       return self.entity.gamemap.engine
-+       return self.gamemap.engine
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from engine import Engine
-    from entity import Entity
-    <span class="new-text">from game_map import GameMap</span>
-
-
-class BaseComponent:
-    <span class="crossed-out-text">entity: Entity  # Owning entity instance.</span>
-    <span class="new-text">parent: Entity  # Owning entity instance.
-
-    @property
-    def gamemap(self) -> GameMap:
-        return self.parent.gamemap</span>
-
-    @property
-    def engine(self) -> Engine:
-        <span class="crossed-out-text">return self.entity.gamemap.engine</span>
-        <span class="new-text">return self.gamemap.engine</span></pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-`fighter.py`
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-class Fighter(BaseComponent):
--   entity: Actor
-+   parent: Actor
-
-    def __init__(self, hp: int, defense: int, power: int):
-        self.max_hp = hp
-        self._hp = hp
-        self.defense = defense
-        self.power = power
-
-    @property
-    def hp(self) -> int:
-        return self._hp
-
-    @hp.setter
-    def hp(self, value: int) -> None:
-        self._hp = max(0, min(value, self.max_hp))
--       if self._hp == 0 and self.entity.ai:
-+       if self._hp == 0 and self.parent.ai:
-            self.die()
-
-    def die(self) -> None:
--       if self.engine.player is self.entity:
-+       if self.engine.player is self.parent:
-            death_message = "You died!"
-            death_message_color = color.player_die
-            self.engine.event_handler = GameOverEventHandler(self.engine)
-        else:
--           death_message = f"{self.entity.name} is dead!"
-+           death_message = f"{self.parent.name} is dead!"
-            death_message_color = color.enemy_die
-
-+       self.parent.char = "%"
-+       self.parent.color = (191, 0, 0)
-+       self.parent.blocks_movement = False
-+       self.parent.ai = None
-+       self.parent.name = f"remains of {self.parent.name}"
-+       self.parent.render_order = RenderOrder.CORPSE
--       self.entity.char = "%"
--       self.entity.color = (191, 0, 0)
--       self.entity.blocks_movement = False
--       self.entity.ai = None
--       self.entity.name = f"remains of {self.entity.name}"
--       self.entity.render_order = RenderOrder.CORPSE
-
-        self.engine.message_log.add_message(death_message, death_message_color)
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>class Fighter(BaseComponent):
-    <span class="crossed-out-text">entity: Actor</span>
-    <span class="new-text">parent: Actor</span>
-
-    def __init__(self, hp: int, defense: int, power: int):
-        self.max_hp = hp
-        self._hp = hp
-        self.defense = defense
-        self.power = power
-
-    @property
-    def hp(self) -> int:
-        return self._hp
-
-    @hp.setter
-    def hp(self, value: int) -> None:
-        self._hp = max(0, min(value, self.max_hp))
-        <span class="crossed-out-text">if self._hp == 0 and self.entity.ai:</span>
-        <span class="new-text">if self._hp == 0 and self.parent.ai:</span>
-            self.die()
-
-    def die(self) -> None:
-        <span class="crossed-out-text">if self.engine.player is self.entity:</span>
-        <span class="new-text">if self.engine.player is self.parent:</span>
-            death_message = "You died!"
-            death_message_color = color.player_die
-            self.engine.event_handler = GameOverEventHandler(self.engine)
-        else:
-            <span class="crossed-out-text">death_message = f"{self.entity.name} is dead!"</span>
-            <span class="new-text">death_message = f"{self.parent.name} is dead!"</span>
-            death_message_color = color.enemy_die
-
-        <span class="new-text">self.parent.char = "%"
-        self.parent.color = (191, 0, 0)
-        self.parent.blocks_movement = False
-        self.parent.ai = None
-        self.parent.name = f"remains of {self.parent.name}"
-        self.parent.render_order = RenderOrder.CORPSE</span>
-        <span class="crossed-out-text">self.entity.char = "%"</span>
-        <span class="crossed-out-text">self.entity.color = (191, 0, 0)</span>
-        <span class="crossed-out-text">self.entity.blocks_movement = False</span>
-        <span class="crossed-out-text">self.entity.ai = None</span>
-        <span class="crossed-out-text">self.entity.name = f"remains of {self.entity.name}"</span>
-        <span class="crossed-out-text">self.entity.render_order = RenderOrder.CORPSE</span>
-
-        self.engine.message_log.add_message(death_message, death_message_color)</pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-## Part 8
 
 So far, our game has movement, dungeon exploring, combat, and AI (okay, we're stretching the meaning of "intelligence" in *artificial intelligence* to its limits, but bear with me here). Now it's time for another staple of the roguelike genre: items\! Why would our rogue venture into the dungeons of doom if not for some sweet loot, after all?
 
 In this part of the tutorial, we'll achieve a few things: a working inventory, and a functioning healing potion. The next part will add more items that can be picked up, but for now, just the healing potion will suffice.
 
-For this part, we'll need four more colors. Let's get adding those out of the way now. Open up `color.py` and add these colors:
+For this part, we'll need four more colors. Let's get adding those out of the way now. Open up `game/color.py` and add these colors:
 
 {{< codetab >}}
 {{< diff-tab >}}
@@ -605,9 +23,8 @@ enemy_atk = (0xFF, 0xC0, 0xC0)
 player_die = (0xFF, 0x30, 0x30)
 enemy_die = (0xFF, 0xA0, 0x30)
 
-+invalid = (0xFF, 0xFF, 0x00)
 +impossible = (0x80, 0x80, 0x80)
-+error = (0xFF, 0x40, 0x40)
++invalid = (0xFF, 0xFF, 0x00)
 
 welcome_text = (0x20, 0xA0, 0xFF)
 +health_recovered = (0x0, 0xFF, 0x0)
@@ -627,9 +44,8 @@ enemy_atk = (0xFF, 0xC0, 0xC0)
 player_die = (0xFF, 0x30, 0x30)
 enemy_die = (0xFF, 0xA0, 0x30)
 
-<span class="new-text">invalid = (0xFF, 0xFF, 0x00)
-impossible = (0x80, 0x80, 0x80)
-error = (0xFF, 0x40, 0x40)</span>
+<span class="new-text">impossible = (0x80, 0x80, 0x80)
+invalid = (0xFF, 0xFF, 0x00)</span>
 
 welcome_text = (0x20, 0xA0, 0xFF)
 <span class="new-text">health_recovered = (0x0, 0xFF, 0x0)</span>
@@ -644,7 +60,7 @@ These will become useful shortly.
 
 There's another thing we can knock out right now that we'll use later: The ability for a `Fighter` component to recover health, and the ability to take damage directly (without the defense modifier). We won't use the damage function this chapter, but since the two functions are effectively opposites, we can get writing it over with now.
 
-Open up `fighter.py` and add these two functions:
+Open up `game/components/fighter.py` and add these two functions:
 
 {{< codetab >}}
 {{< diff-tab >}}
@@ -699,7 +115,7 @@ One thing we're going to need is a way to *not* consume an item or take a turn i
 
 We could just consume the potion anyway, and have it go to waste, but if you've played a game that does that, you know how frustrating it can be, especially if the player clicked the health potion on accident. A better way would be to warn the user that they're trying to do something that makes no sense, and save the player from wasting both the potion and their turn.
 
-But how can we achieve that? We'll discuss it a bit more later on, but the idea is that if we do something impossible, we should raise an exception. Which one? Well, we can define a custom exception, which can give us details on what happened. Create a new file called `exceptions.py` and put the following class into it:
+But how can we achieve that? We'll discuss it a bit more later on, but the idea is that if we do something impossible, we should raise an exception. Which one? Well, we can define a custom exception, which can give us details on what happened. Create a new file called `game/exceptions.py` and put the following class into it:
 
 ```py3
 class Impossible(Exception):
@@ -713,172 +129,22 @@ class Impossible(Exception):
 
 So what do we do with the raised exception? Well, we should catch it! But where?
 
-Let's modify the `main.py` file to catch the exceptions, like this:
+With our handler-based architecture from Part 10, exception handling is already integrated into the event processing flow. The `Impossible` exception we just created will be caught by our handler system when actions fail.
+
+Let's update our input handlers to properly handle these exceptions. We'll modify `game/input_handlers.py`:
 
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-#!/usr/bin/env python3
-import copy
-+import traceback
-
-import tcod
-
 ...
++from game.exceptions import Impossible
 
-            context.present(root_console)
-
-+           try:
-+               for event in tcod.event.wait():
-+                   context.convert_event(event)
-+                   engine.event_handler.handle_events(event)
-+           except Exception:  # Handle exceptions in game.
-+               traceback.print_exc()  # Print error to stderr.
-+               # Then print the error to the message log.
-+               engine.message_log.add_message(traceback.format_exc(), color.error)
--           engine.event_handler.handle_events(context)
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>#!/usr/bin/env python3
-import copy
-<span class="new-text">import traceback</span>
-
-import tcod
-
-...
-
-            context.present(root_console)
-
-            <span class="new-text">try:
-                for event in tcod.event.wait():
-                    context.convert_event(event)
-                    engine.event_handler.handle_events(event)
-            except Exception:  # Handle exceptions in game.
-                traceback.print_exc()  # Print error to stderr.
-                # Then print the error to the message log.
-                engine.message_log.add_message(traceback.format_exc(), color.error)</span>
-            <span class="crossed-out-text">engine.event_handler.handle_events(context)</span></pre>
-{{</ original-tab >}}
-{{</ codetab >}}
-
-This is a generalized, catch all solution, which will print *all* exceptions to the message log, not just instances of `Impossible`. This can be helpful for debugging your game, or getting error reports from users.
-
-However, this solution doesn't mesh with our current implementation of the `EventHandler`. `EventHandler` currently loops through the events and converts them (to get the mouse information). We'll need to edit a few things in `input_handlers.py` to get back on track.
-
-{{< codetab >}}
-{{< diff-tab >}}
-{{< highlight diff >}}
-import tcod
-
-+from actions import (
-+   Action,
-+   BumpAction,
-+   EscapeAction,
-+   WaitAction
-+)
-+import color
-+import exceptions
--from actions import Action, BumpAction, EscapeAction, WaitAction
+if TYPE_CHECKING:
+    import game.engine
 
 
-class EventHandler(tcod.event.EventDispatch[Action]):
-    def __init__(self, engine: Engine):
-        self.engine = engine
-
-+   def handle_events(self, event: tcod.event.Event) -> None:
-+       self.handle_action(self.dispatch(event))
-
-+   def handle_action(self, action: Optional[Action]) -> bool:
-+       """Handle actions returned from event methods.
-
-+       Returns True if the action will advance a turn.
-+       """
-+       if action is None:
-+           return False
-
-+       try:
-+           action.perform()
-+       except exceptions.Impossible as exc:
-+           self.engine.message_log.add_message(exc.args[0], color.impossible)
-+           return False  # Skip enemy turn on exceptions.
-
-+       self.engine.handle_enemy_turns()
-
-+       self.engine.update_fov()
-+       return True
-
--   def handle_events(self, context: tcod.context.Context) -> None:
--       for event in tcod.event.wait():
--           context.convert_event(event)
--           self.dispatch(event)
-
+class EventHandler:
     ...
-
-
-class MainGameEventHandler(EventHandler):
--   def handle_events(self, context: tcod.context.Context) -> None:
--       for event in tcod.event.wait():
--           context.convert_event(event)
-
--           action = self.dispatch(event)
-
--           if action is None:
--               continue
-
--           action.perform()
-
--           self.engine.handle_enemy_turns()
-
--           self.engine.update_fov()  # Update the FOV before the players next action.
-
-    ...
-
-class GameOverEventHandler(EventHandler):
--   def handle_events(self, context: tcod.context.Context) -> None:
--       for event in tcod.event.wait():
--           action = self.dispatch(event)
-
--           if action is None:
--               continue
-
--           action.perform()
-
--   def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[Action]:
--       action: Optional[Action] = None
-
--       key = event.sym
-
--       if key == tcod.event.K_ESCAPE:
--           action = EscapeAction(self.engine.player)
-
--       # No valid key was pressed
--       return action
-+   def ev_keydown(self, event: tcod.event.KeyDown) -> None:
-+       if event.sym == tcod.event.K_ESCAPE:
-+           raise SystemExit()
-{{</ highlight >}}
-{{</ diff-tab >}}
-{{< original-tab >}}
-<pre>import tcod
-
-<span class="new-text">from actions import (
-    Action,
-    BumpAction,
-    EscapeAction,
-    WaitAction
-)
-import color
-import exceptions</span>
-<span class="crossed-out-text">from actions import Action, BumpAction, EscapeAction, WaitAction</span>
-
-
-class EventHandler(tcod.event.EventDispatch[Action]):
-    def __init__(self, engine: Engine):
-        self.engine = engine
-
-    <span class="new-text">def handle_events(self, event: tcod.event.Event) -> None:
-        self.handle_action(self.dispatch(event))
 
     def handle_action(self, action: Optional[Action]) -> bool:
         """Handle actions returned from event methods.
@@ -888,77 +154,58 @@ class EventHandler(tcod.event.EventDispatch[Action]):
         if action is None:
             return False
 
-        try:
-            action.perform()
-        except exceptions.Impossible as exc:
-            self.engine.message_log.add_message(exc.args[0], color.impossible)
-            return False  # Skip enemy turn on exceptions.
++       try:
++           action.perform()
++       except Impossible as exc:
++           self.engine.message_log.add_message(exc.args[0], color.impossible)
++           return False  # Skip enemy turn on exceptions.
+-       action.perform()
 
         self.engine.handle_enemy_turns()
-
         self.engine.update_fov()
-        return True</span>
+        return True
 
-    <span class="crossed-out-text">def handle_events(self, context: tcod.context.Context) -> None:</span>
-        <span class="crossed-out-text">for event in tcod.event.wait():</span>
-            <span class="crossed-out-text">context.convert_event(event)</span>
-            <span class="crossed-out-text">self.dispatch(event)</span>
+{{</ highlight >}}
+{{</ diff-tab >}}
+{{< original-tab >}}
+<pre>...
+<span class="new-text">from game.exceptions import Impossible</span>
 
+if TYPE_CHECKING:
+    import game.engine
+
+
+class EventHandler:
     ...
 
+    def handle_action(self, action: Optional[Action]) -> bool:
+        """Handle actions returned from event methods.
 
-class MainGameEventHandler(EventHandler):
-    <span class="crossed-out-text">def handle_events(self, context: tcod.context.Context) -> None:</span>
-        <span class="crossed-out-text">for event in tcod.event.wait():</span>
-            <span class="crossed-out-text">context.convert_event(event)</span>
+        Returns True if the action will advance a turn.
+        """
+        if action is None:
+            return False
 
-            <span class="crossed-out-text">action = self.dispatch(event)</span>
+        <span class="new-text">try:
+            action.perform()
+        except Impossible as exc:
+            self.engine.message_log.add_message(exc.args[0], color.impossible)
+            return False  # Skip enemy turn on exceptions.</span>
+        <span class="crossed-out-text">action.perform()</span>
 
-            <span class="crossed-out-text">if action is None:</span>
-                <span class="crossed-out-text">continue</span>
-
-            <span class="crossed-out-text">action.perform()</span>
-
-            <span class="crossed-out-text">self.engine.handle_enemy_turns()</span>
-
-            <span class="crossed-out-text">self.engine.update_fov()  # Update the FOV before the players next action.</span>
-
-    ...
-
-class GameOverEventHandler(EventHandler):
-    <span class="crossed-out-text">def handle_events(self, context: tcod.context.Context) -> None:</span>
-        <span class="crossed-out-text">for event in tcod.event.wait():</span>
-            <span class="crossed-out-text">action = self.dispatch(event)</span>
-
-            <span class="crossed-out-text">if action is None:</span>
-                <span class="crossed-out-text">continue</span>
-
-            <span class="crossed-out-text">action.perform()</span>
-
-    <span class="crossed-out-text">def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[Action]:</span>
-        <span class="crossed-out-text">action: Optional[Action] = None</span>
-
-        <span class="crossed-out-text">key = event.sym</span>
-
-        <span class="crossed-out-text">if key == tcod.event.K_ESCAPE:</span>
-            <span class="crossed-out-text">action = EscapeAction(self.engine.player)</span>
-
-        <span class="crossed-out-text"># No valid key was pressed</span>
-        <span class="crossed-out-text">return action</span>
-    <span class="new-text">def ev_keydown(self, event: tcod.event.KeyDown) -> None:
-        if event.sym == tcod.event.K_ESCAPE:
-            raise SystemExit()</span></pre>
+        self.engine.handle_enemy_turns()
+        self.engine.update_fov()
+        return True</pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
-Now that we've got our event handlers updated, let's actually put the `Impossible` exception to good use. We can start by editing `actions.py` to make use of it when the player tries to move into an invalid area:
+Now that we've got our event handlers updated, let's actually put the `Impossible` exception to good use. We can start by editing `game/actions.py` to make use of it when the player tries to move into an invalid area:
 
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
 ...
-import color
-+import exceptions
++from game.exceptions import Impossible
 
 if TYPE_CHECKING:
     ...
@@ -969,7 +216,7 @@ class MeleeAction(ActionWithDirection):
         target = self.target_actor
         if not target:
 -           return  # No entity to attack.
-+           raise exceptions.Impossible("Nothing to attack.")
++           raise Impossible("Nothing to attack.")
 
         ...
 
@@ -979,22 +226,21 @@ class MovementAction(ActionWithDirection):
 
         if not self.engine.game_map.in_bounds(dest_x, dest_y):
 +           # Destination is out of bounds.
-+           raise exceptions.Impossible("That way is blocked.")
++           raise Impossible("That way is blocked.")
 -           return  # Destination is out of bounds.
          if not self.engine.game_map.tiles["walkable"][dest_x, dest_y]:
 +           # Destination is blocked by a tile.
-+           raise exceptions.Impossible("That way is blocked.")
++           raise Impossible("That way is blocked.")
 -           return  # Destination is blocked by a tile.
          if self.engine.game_map.get_blocking_entity_at_location(dest_x, dest_y):
 +           # Destination is blocked by an entity.
-+           raise exceptions.Impossible("That way is blocked.")
++           raise Impossible("That way is blocked.")
 -           return  # Destination is blocked by an entity.
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>...
-import color
-<span class="new-text">import exceptions</span>
+<span class="new-text">from game.exceptions import Impossible</span>
 
 if TYPE_CHECKING:
     ...
@@ -1005,7 +251,7 @@ class MeleeAction(ActionWithDirection):
         target = self.target_actor
         if not target:
             <span class="crossed-out-text">return  # No entity to attack.</span>
-            <span class="new-text">raise exceptions.Impossible("Nothing to attack.")</span>
+            <span class="new-text">raise Impossible("Nothing to attack.")</span>
 
         ...
 
@@ -1015,32 +261,28 @@ class MovementAction(ActionWithDirection):
 
         if not self.engine.game_map.in_bounds(dest_x, dest_y):
             <span class="new-text"># Destination is out of bounds.
-            raise exceptions.Impossible("That way is blocked.")</span>
+            raise Impossible("That way is blocked.")</span>
             <span class="crossed-out-text">return  # Destination is out of bounds.</span>
          if not self.engine.game_map.tiles["walkable"][dest_x, dest_y]:
             <span class="new-text"># Destination is blocked by a tile.
-            raise exceptions.Impossible("That way is blocked.")</span>
+            raise Impossible("That way is blocked.")</span>
             <span class="crossed-out-text">return  # Destination is blocked by a tile.</span>
          if self.engine.game_map.get_blocking_entity_at_location(dest_x, dest_y):
             <span class="new-text"># Destination is blocked by an entity.
-            raise exceptions.Impossible("That way is blocked.")</span>
+            raise Impossible("That way is blocked.")</span>
             <span class="crossed-out-text">return  # Destination is blocked by an entity.</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
 Now, if you try moving into a wall, you'll get a message in the log, and the player's turn won't be wasted.
 
-So what about when the enemies try doing something impossible? You might want to know when that happens for debugging purposes, but during normal execution of our game, we can simply ignore it, and have the enemy skip their turn. To do this, modify `engine.py` like this:
+So what about when the enemies try doing something impossible? You might want to know when that happens for debugging purposes, but during normal execution of our game, we can simply ignore it, and have the enemy skip their turn. To do this, modify `game/engine.py` like this:
 
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
 ...
-from tcod.map import compute_fov
-
-+import exceptions
-from input_handlers import MainGameEventHandler
-from message_log import MessageLog
++from game.exceptions import Impossible
 
 ...
 
@@ -1049,18 +291,14 @@ from message_log import MessageLog
             if entity.ai:
 +               try:
 +                   entity.ai.perform()
-+               except exceptions.Impossible:
++               except Impossible:
 +                   pass  # Ignore impossible action exceptions from AI.
 -               entity.ai.perform()
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>...
-from tcod.map import compute_fov
-
-<span class="new-text">import exceptions</span>
-from input_handlers import MainGameEventHandler
-from message_log import MessageLog
+<span class="new-text">from game.exceptions import Impossible</span>
 
 ...
 
@@ -1069,7 +307,7 @@ from message_log import MessageLog
             if entity.ai:
                 <span class="new-text">try:
                     entity.ai.perform()
-                except exceptions.Impossible:
+                except Impossible:
                     pass  # Ignore impossible action exceptions from AI.</span>
                 <span class="crossed-out-text">entity.ai.perform()</span></pre>
 {{</ original-tab >}}
@@ -1079,20 +317,18 @@ This is great and all, but wasn't this chapter supposed to be about implementing
 
 The way we'll implement our health potions will be similar to how we implemented enemies: We'll create a component that holds the functionality we want, and we'll create a subclass of `Entity` that holds the relevant component. From the `Consumable` component, we can create subclasses that implement the specific functionality we want for each item. In this case, it'll be a health potion, but in the next chapter, we'll be implementing other types of consumables, so we'll want to stay flexible.
 
-In the `components` directory, create a file called `consumable.py` and fill it with the following contents:
+In the `game/components` directory, create a file called `consumable.py` and fill it with the following contents:
 
 ```py3
 from __future__ import annotations
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
-import actions
-import color
-from components.base_component import BaseComponent
-from exceptions import Impossible
-
-if TYPE_CHECKING:
-    from entity import Actor, Item
+from game.actions import Action, ItemAction
+from game.color import health_recovered
+from game.components.base_component import BaseComponent
+from game.exceptions import Impossible
+import game.entity
 
 
 class Consumable(BaseComponent):
