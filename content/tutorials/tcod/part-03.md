@@ -1,6 +1,6 @@
 ---
 title: "Part 3 - Generating a dungeon"
-date: 2020-06-23
+date: 2025-08-25
 draft: false
 ---
 
