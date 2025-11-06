@@ -11,7 +11,9 @@
     {{ end }}
 </head>
 <body>
-    {{ block "main" . }}{{ end }}
+    <div class="container">
+        {{ block "main" . }}{{ end }}
+    </div>
 
     <!-- Custom JavaScript -->
     {{ range .Site.Params.customJS }}
