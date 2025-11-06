@@ -1,6 +1,6 @@
 ---
 title: "Part 13 - Gearing up"
-date: 2020-07-28
+date: 2025-11-05
 draft: false
 ---
 

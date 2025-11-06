@@ -1,6 +1,6 @@
 ---
 title: "Part 9 - Ranged Scrolls and Targeting"
-date: 2020-07-14
+date: 2025-11-05
 draft: false
 ---
 
