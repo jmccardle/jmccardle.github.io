@@ -71,7 +71,6 @@ First thing we need is a way to get the closest entity to the entity casting the
 from __future__ import annotations
 
 import copy
-+import math
 from typing import Optional, Tuple, Type, TypeVar, TYPE_CHECKING, Union
 ...
 
@@ -83,7 +82,7 @@ from typing import Optional, Tuple, Type, TypeVar, TYPE_CHECKING, Union
 +       """
 +       Return the distance between the current entity and the given (x, y) coordinate.
 +       """
-+       return math.sqrt((x - self.x) ** 2 + (y - self.y) ** 2)
++       return float(((x - self.x) ** 2 + (y - self.y) ** 2) ** 0.5)
 
     def move(self, dx: int, dy: int) -> None:
         ...
@@ -93,7 +92,6 @@ from typing import Optional, Tuple, Type, TypeVar, TYPE_CHECKING, Union
 <pre>from __future__ import annotations
 
 import copy
-<span class="new-text">import math</span>
 from typing import Optional, Tuple, Type, TypeVar, TYPE_CHECKING, Union
 ...
 
@@ -105,7 +103,7 @@ from typing import Optional, Tuple, Type, TypeVar, TYPE_CHECKING, Union
         """
         Return the distance between the current entity and the given (x, y) coordinate.
         """
-        return math.sqrt((x - self.x) ** 2 + (y - self.y) ** 2)</span>
+        return float(((x - self.x) ** 2 + (y - self.y) ** 2) ** 0.5)</span>
 
     def move(self, dx: int, dy: int) -> None:
         ...</pre>
@@ -126,7 +124,7 @@ class HealingConsumable(Consumable):
 +       self.damage = damage
 +       self.maximum_range = maximum_range
 
-+   def activate(self, action: actions.ItemAction) -> None:
++   def activate(self, action: game.actions.ItemAction) -> None:
 +       consumer = action.entity
 +       target = None
 +       closest_distance = self.maximum_range + 1.0
@@ -146,7 +144,7 @@ class HealingConsumable(Consumable):
 +           target.fighter.take_damage(self.damage)
 +           self.consume()
 +       else:
-+           raise Impossible("No enemy is close enough to strike.")
++           raise game.exceptions.Impossible("No enemy is close enough to strike.")
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
@@ -159,7 +157,7 @@ class HealingConsumable(Consumable):
         self.damage = damage
         self.maximum_range = maximum_range
 
-    def activate(self, action: actions.ItemAction) -> None:
+    def activate(self, action: game.actions.ItemAction) -> None:
         consumer = action.entity
         target = None
         closest_distance = self.maximum_range + 1.0
@@ -179,7 +177,7 @@ class HealingConsumable(Consumable):
             target.fighter.take_damage(self.damage)
             self.consume()
         else:
-            raise Impossible("No enemy is close enough to strike.")</span></pre>
+            raise game.exceptions.Impossible("No enemy is close enough to strike.")</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -194,7 +192,12 @@ In order to use this, we'll need to actually place some lightning scrolls on the
 {{< highlight diff >}}
 from components.ai import HostileEnemy
 -from components.consumable import HealingConsumable
-+from components import consumable
++from components.consumable import (
++   ConfusionConsumable,
++   FireballDamageConsumable,
++   HealingConsumable,
++   LightningDamageConsumable,
++)
 from components.fighter import Fighter
 from components.inventory import Inventory
 from entity import Actor, Item
@@ -204,21 +207,26 @@ health_potion = Item(
     char="!",
     color=(127, 0, 255),
     name="Health Potion",
--   consumable=HealingConsumable(amount=4),
-+   consumable=consumable.HealingConsumable(amount=4),
+    consumable=HealingConsumable(amount=4),
 )
++
 +lightning_scroll = Item(
 +   char="~",
 +   color=(255, 255, 0),
 +   name="Lightning Scroll",
-+   consumable=consumable.LightningDamageConsumable(damage=20, maximum_range=5),
++   consumable=LightningDamageConsumable(damage=20, maximum_range=5),
 +)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>from components.ai import HostileEnemy
 <span class="crossed-out-text">from components.consumable import HealingConsumable</span>
-<span class="new-text">from components import consumable</span>
+<span class="new-text">from components.consumable import (
+    ConfusionConsumable,
+    FireballDamageConsumable,
+    HealingConsumable,
+    LightningDamageConsumable,
+)</span>
 from components.fighter import Fighter
 from components.inventory import Inventory
 from entity import Actor, Item
@@ -228,19 +236,19 @@ health_potion = Item(
     char="!",
     color=(127, 0, 255),
     name="Health Potion",
-    <span class="crossed-out-text">consumable=HealingConsumable(amount=4),</span>
-    <span class="new-text">consumable=consumable.HealingConsumable(amount=4),</span>
+    consumable=HealingConsumable(amount=4),
 )
+
 <span class="new-text">lightning_scroll = Item(
     char="~",
     color=(255, 255, 0),
     name="Lightning Scroll",
-    consumable=consumable.LightningDamageConsumable(damage=20, maximum_range=5),
+    consumable=LightningDamageConsumable(damage=20, maximum_range=5),
 )</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
-Notice that we also are importing `consumable` instead of the specific classes inside, which affects our declaration of `health_potion`. This will save us from having to add a new import every time we create a new consumable class.
+Notice that we're importing all the consumable classes we'll need at the top of the file. This makes it clear which consumables are being used and keeps our import statement organized.
 
 Now, for `procgen.py`:
 
@@ -253,13 +261,15 @@ Now, for `procgen.py`:
         y = random.randint(room.y1 + 1, room.y2 - 1)
 
         if not any(entity.x == x and entity.y == y for entity in dungeon.entities):
--           entity_factories.health_potion.spawn(dungeon, x, y)
+-           item = copy.deepcopy(health_potion)
 +           item_chance = random.random()
 
 +           if item_chance < 0.7:
-+               entity_factories.health_potion.spawn(dungeon, x, y)
++               item = copy.deepcopy(health_potion)
 +           else:
-+               entity_factories.lightning_scroll.spawn(dungeon, x, y)
++               item = copy.deepcopy(lightning_scroll)
+
++           item.place(x, y, dungeon)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
@@ -269,13 +279,15 @@ Now, for `procgen.py`:
         y = random.randint(room.y1 + 1, room.y2 - 1)
 
         if not any(entity.x == x and entity.y == y for entity in dungeon.entities):
-            <span class="crossed-out-text">entity_factories.health_potion.spawn(dungeon, x, y)</span>
+            <span class="crossed-out-text">item = copy.deepcopy(health_potion)</span>
             <span class="new-text">item_chance = random.random()
 
             if item_chance < 0.7:
-                entity_factories.health_potion.spawn(dungeon, x, y)
+                item = copy.deepcopy(health_potion)
             else:
-                entity_factories.lightning_scroll.spawn(dungeon, x, y)</span></pre>
+                item = copy.deepcopy(lightning_scroll)
+
+            item.place(x, y, dungeon)</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -367,9 +379,9 @@ class InventoryDropHandler(InventoryEventHandler):
 +class LookHandler(SelectIndexHandler):
 +   """Lets the player look around using the keyboard."""
 
-+   def on_index_selected(self, x: int, y: int) -> None:
++   def on_index_selected(self, x: int, y: int) -> MainGameEventHandler:
 +       """Return to main handler."""
-+       self.engine.event_handler = MainGameEventHandler(self.engine)
++       return MainGameEventHandler(self.engine)
 
 
 class MainGameEventHandler(EventHandler):
@@ -450,9 +462,9 @@ class InventoryDropHandler(InventoryEventHandler):
 class LookHandler(SelectIndexHandler):
     """Lets the player look around using the keyboard."""
 
-    def on_index_selected(self, x: int, y: int) -> None:
+    def on_index_selected(self, x: int, y: int) -> MainGameEventHandler:
         """Return to main handler."""
-        self.engine.event_handler = MainGameEventHandler(self.engine)</span>
+        return MainGameEventHandler(self.engine)</span>
 
 
 class MainGameEventHandler(EventHandler):
@@ -523,10 +535,11 @@ import numpy as np  # type: ignore
 import tcod
 
 -from actions import Action, MeleeAction, MovementAction, WaitAction
-+from actions import Action, BumpAction, MeleeAction, MovementAction, WaitAction
++from game.actions import Action, BumpAction, MeleeAction, MovementAction
 
 if TYPE_CHECKING:
-    from entity import Actor
+-   from entity import Actor
++   import game.entity
 
 
 class BaseAI(Action):
@@ -539,9 +552,7 @@ class BaseAI(Action):
 +   If an actor occupies a tile it is randomly moving into, it will attack.
 +   """
 
-+   def __init__(
-+       self, entity: Actor, previous_ai: Optional[BaseAI], turns_remaining: int
-+   ):
++   def __init__(self, entity: game.entity.Actor, previous_ai: Optional[BaseAI], turns_remaining: int):
 +       super().__init__(entity)
 
 +       self.previous_ai = previous_ai
@@ -550,9 +561,7 @@ class BaseAI(Action):
 +   def perform(self) -> None:
 +       # Revert the AI back to the original state if the effect has run its course.
 +       if self.turns_remaining <= 0:
-+           self.engine.message_log.add_message(
-+               f"The {self.entity.name} is no longer confused."
-+           )
++           self.engine.message_log.add_message(f"The {self.entity.name} is no longer confused.")
 +           self.entity.ai = self.previous_ai
 +       else:
 +           # Pick a random direction
@@ -572,8 +581,12 @@ class BaseAI(Action):
 +           self.turns_remaining -= 1
 
 +           # The actor will either try to move or attack in the chosen random direction.
-+           # Its possible the actor will just bump into the wall, wasting a turn.
-+           return BumpAction(self.entity, direction_x, direction_y,).perform()
++           # It's possible the actor will just bump into the wall, wasting a turn.
++           return BumpAction(
++               self.entity,
++               direction_x,
++               direction_y,
++           ).perform()
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
@@ -587,10 +600,11 @@ import numpy as np  # type: ignore
 import tcod
 
 <span class="crossed-out-text">from actions import Action, MeleeAction, MovementAction, WaitAction</span>
-<span class="new-text">from actions import Action, BumpAction, MeleeAction, MovementAction, WaitAction</span>
+<span class="new-text">from game.actions import Action, BumpAction, MeleeAction, MovementAction</span>
 
 if TYPE_CHECKING:
-    from entity import Actor
+    <span class="crossed-out-text">from entity import Actor</span>
+    <span class="new-text">import game.entity</span>
 
 
 class BaseAI(Action):
@@ -603,9 +617,7 @@ class BaseAI(Action):
     If an actor occupies a tile it is randomly moving into, it will attack.
     """
 
-    def __init__(
-        self, entity: Actor, previous_ai: Optional[BaseAI], turns_remaining: int
-    ):
+    def __init__(self, entity: game.entity.Actor, previous_ai: Optional[BaseAI], turns_remaining: int):
         super().__init__(entity)
 
         self.previous_ai = previous_ai
@@ -614,9 +626,7 @@ class BaseAI(Action):
     def perform(self) -> None:
         # Revert the AI back to the original state if the effect has run its course.
         if self.turns_remaining <= 0:
-            self.engine.message_log.add_message(
-                f"The {self.entity.name} is no longer confused."
-            )
+            self.engine.message_log.add_message(f"The {self.entity.name} is no longer confused.")
             self.entity.ai = self.previous_ai
         else:
             # Pick a random direction
@@ -636,8 +646,12 @@ class BaseAI(Action):
             self.turns_remaining -= 1
 
             # The actor will either try to move or attack in the chosen random direction.
-            # Its possible the actor will just bump into the wall, wasting a turn.
-            return BumpAction(self.entity, direction_x, direction_y,).perform()</span></pre>
+            # It's possible the actor will just bump into the wall, wasting a turn.
+            return BumpAction(
+                self.entity,
+                direction_x,
+                direction_y,
+            ).perform()</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -673,13 +687,13 @@ class LookHandler(SelectIndexHandler):
 +   """Handles targeting a single enemy. Only the enemy selected will be affected."""
 
 +   def __init__(
-+       self, engine: Engine, callback: Callable[[Tuple[int, int]], Optional[Action]]
++       self, engine: game.engine.Engine, callback: Callable[[Tuple[int, int]], Optional[game.actions.Action]]
 +   ):
 +       super().__init__(engine)
 
 +       self.callback = callback
 
-+   def on_index_selected(self, x: int, y: int) -> Optional[Action]:
++   def on_index_selected(self, x: int, y: int) -> Optional[game.actions.Action]:
 +       return self.callback((x, y))
 
 
@@ -705,13 +719,13 @@ class LookHandler(SelectIndexHandler):
     """Handles targeting a single enemy. Only the enemy selected will be affected."""
 
     def __init__(
-        self, engine: Engine, callback: Callable[[Tuple[int, int]], Optional[Action]]
+        self, engine: game.engine.Engine, callback: Callable[[Tuple[int, int]], Optional[game.actions.Action]]
     ):
         super().__init__(engine)
 
         self.callback = callback
 
-    def on_index_selected(self, x: int, y: int) -> Optional[Action]:
+    def on_index_selected(self, x: int, y: int) -> Optional[game.actions.Action]:
         return self.callback((x, y))</span>
 
 
@@ -728,54 +742,58 @@ So what do we pass as the `callback`? Let's define that now, in `consumable.py`.
 {{< diff-tab >}}
 {{< highlight diff >}}
 ...
-import color
-+import components.ai
-from components.base_component import BaseComponent
-from exceptions import Impossible
-+from input_handlers import SingleRangedAttackHandler
+-import color
+-import components.ai
+-from components.base_component import BaseComponent
+-from exceptions import Impossible
+-from input_handlers import SingleRangedAttackHandler
++from game.components.ai import ConfusedEnemy
++from game.input_handlers import ActionOrHandler, SingleRangedAttackHandler
 
 if TYPE_CHECKING:
-    from entity import Actor, Item
+-   from entity import Actor, Item
++   import game.actions
++   from game.entity import Actor, Item
 
 
 class Consumable(BaseComponent):
     parent: Item
 
-    def consume(self, consumer: Actor) -> None:
-        raise NotImplementedError()
+-   def consume(self, consumer: Actor) -> None:
++   def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:
+        ...
 
 
 +class ConfusionConsumable(Consumable):
 +   def __init__(self, number_of_turns: int):
 +       self.number_of_turns = number_of_turns
 
-+   def get_action(self, consumer: Actor) -> Optional[actions.Action]:
-+       self.engine.message_log.add_message(
-+           "Select a target location.", color.needs_target
-+       )
-+       self.engine.event_handler = SingleRangedAttackHandler(
++   def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:
++       self.engine.message_log.add_message("Select a target location.", game.color.needs_target)
++       return SingleRangedAttackHandler(
 +           self.engine,
-+           callback=lambda xy: actions.ItemAction(consumer, self.parent, xy),
++           callback=lambda xy: game.actions.ItemAction(consumer, self.parent, xy),
 +       )
-+       return None
 
-+   def activate(self, action: actions.ItemAction) -> None:
++   def activate(self, action: game.actions.ItemAction) -> None:
 +       consumer = action.entity
 +       target = action.target_actor
 
 +       if not self.engine.game_map.visible[action.target_xy]:
-+           raise Impossible("You cannot target an area that you cannot see.")
++           raise game.exceptions.Impossible("You cannot target an area that you cannot see.")
 +       if not target:
-+           raise Impossible("You must select an enemy to target.")
++           raise game.exceptions.Impossible("You must select an enemy to target.")
 +       if target is consumer:
-+           raise Impossible("You cannot confuse yourself!")
++           raise game.exceptions.Impossible("You cannot confuse yourself!")
 
 +       self.engine.message_log.add_message(
 +           f"The eyes of the {target.name} look vacant, as it starts to stumble around!",
-+           color.status_effect_applied,
++           game.color.status_effect_applied,
 +       )
-+       target.ai = components.ai.ConfusedEnemy(
-+           entity=target, previous_ai=target.ai, turns_remaining=self.number_of_turns,
++       target.ai = ConfusedEnemy(
++           entity=target,
++           previous_ai=target.ai,
++           turns_remaining=self.number_of_turns,
 +       )
 +       self.consume()
 
@@ -786,54 +804,58 @@ class HealingConsumable(Consumable):
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>...
-import color
-<span class="new-text">import components.ai</span>
+<span class="crossed-out-text">import color
+import components.ai
 from components.base_component import BaseComponent
 from exceptions import Impossible
-<span class="new-text">from input_handlers import SingleRangedAttackHandler</span>
+from input_handlers import SingleRangedAttackHandler</span>
+<span class="new-text">from game.components.ai import ConfusedEnemy
+from game.input_handlers import ActionOrHandler, SingleRangedAttackHandler</span>
 
 if TYPE_CHECKING:
-    from entity import Actor, Item
+    <span class="crossed-out-text">from entity import Actor, Item</span>
+    <span class="new-text">import game.actions
+    from game.entity import Actor, Item</span>
 
 
 class Consumable(BaseComponent):
     parent: Item
 
-    def consume(self, consumer: Actor) -> None:
-        raise NotImplementedError()
+    <span class="crossed-out-text">def consume(self, consumer: Actor) -> None:</span>
+    <span class="new-text">def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:</span>
+        ...
 
 
 <span class="new-text">class ConfusionConsumable(Consumable):
     def __init__(self, number_of_turns: int):
         self.number_of_turns = number_of_turns
 
-    def get_action(self, consumer: Actor) -> Optional[actions.Action]:
-        self.engine.message_log.add_message(
-            "Select a target location.", color.needs_target
-        )
-        self.engine.event_handler = SingleRangedAttackHandler(
+    def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:
+        self.engine.message_log.add_message("Select a target location.", game.color.needs_target)
+        return SingleRangedAttackHandler(
             self.engine,
-            callback=lambda xy: actions.ItemAction(consumer, self.parent, xy),
+            callback=lambda xy: game.actions.ItemAction(consumer, self.parent, xy),
         )
-        return None
 
-    def activate(self, action: actions.ItemAction) -> None:
+    def activate(self, action: game.actions.ItemAction) -> None:
         consumer = action.entity
         target = action.target_actor
 
         if not self.engine.game_map.visible[action.target_xy]:
-            raise Impossible("You cannot target an area that you cannot see.")
+            raise game.exceptions.Impossible("You cannot target an area that you cannot see.")
         if not target:
-            raise Impossible("You must select an enemy to target.")
+            raise game.exceptions.Impossible("You must select an enemy to target.")
         if target is consumer:
-            raise Impossible("You cannot confuse yourself!")
+            raise game.exceptions.Impossible("You cannot confuse yourself!")
 
         self.engine.message_log.add_message(
             f"The eyes of the {target.name} look vacant, as it starts to stumble around!",
-            color.status_effect_applied,
+            game.color.status_effect_applied,
         )
-        target.ai = components.ai.ConfusedEnemy(
-            entity=target, previous_ai=target.ai, turns_remaining=self.number_of_turns,
+        target.ai = ConfusedEnemy(
+            entity=target,
+            previous_ai=target.ai,
+            turns_remaining=self.number_of_turns,
         )
         self.consume()</span>
 
@@ -845,7 +867,7 @@ class HealingConsumable(Consumable):
 
 `ConfusionConsumable` takes one argument in `__init__`, which is `number_of_turns`. As you might have guessed, this represents the number of turns that the confusion effect lasts for.
 
-`get_action` will ask the player to select a target location, and switch the game's event handler to `SingleRangedAttackHandler`. The `callback` is a `lambda` function (an anonymous, inline function), which takes "xy" as a parameter. "xy" will be the coordinates of the target. The lambda function executes `ItemAction`, which receives the consumer, the parent (the item), and the "xy" coordinates.
+`get_action` will ask the player to select a target location, and returns a `SingleRangedAttackHandler` to handle the targeting. The `callback` is a `lambda` function (an anonymous, inline function), which takes "xy" as a parameter. "xy" will be the coordinates of the target. The lambda function executes `ItemAction`, which receives the consumer, the parent (the item), and the "xy" coordinates.
 
 `activate` is what happens when the player selects a target. First, we get the actor at the location, and make sure that the target is,
 
@@ -868,7 +890,7 @@ troll = Actor(
 +   char="~",
 +   color=(207, 63, 255),
 +   name="Confusion Scroll",
-+   consumable=consumable.ConfusionConsumable(number_of_turns=10),
++   consumable=ConfusionConsumable(number_of_turns=10),
 +)
 health_potion = Item(
     ...
@@ -883,7 +905,7 @@ health_potion = Item(
     char="~",
     color=(207, 63, 255),
     name="Confusion Scroll",
-    consumable=consumable.ConfusionConsumable(number_of_turns=10),
+    consumable=ConfusionConsumable(number_of_turns=10),
 )</span>
 health_potion = Item(
     ...</pre>
@@ -897,21 +919,29 @@ Now that we can create confusion scrolls, let's add some to the map. Open up `pr
 {{< highlight diff >}}
             ...
             if item_chance < 0.7:
-                entity_factories.health_potion.spawn(dungeon, x, y)
+-               entity_factories.health_potion.spawn(dungeon, x, y)
++               item = copy.deepcopy(health_potion)
 +           elif item_chance < 0.9:
-+               entity_factories.confusion_scroll.spawn(dungeon, x, y)
++               item = copy.deepcopy(confusion_scroll)
             else:
-                entity_factories.lightning_scroll.spawn(dungeon, x, y)
+-               entity_factories.lightning_scroll.spawn(dungeon, x, y)
++               item = copy.deepcopy(lightning_scroll)
+
++           item.place(x, y, dungeon)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>            ...
             if item_chance < 0.7:
-                entity_factories.health_potion.spawn(dungeon, x, y)
+                <span class="crossed-out-text">entity_factories.health_potion.spawn(dungeon, x, y)</span>
+                <span class="new-text">item = copy.deepcopy(health_potion)</span>
             <span class="new-text">elif item_chance < 0.9:
-                entity_factories.confusion_scroll.spawn(dungeon, x, y)</span>
+                item = copy.deepcopy(confusion_scroll)</span>
             else:
-                entity_factories.lightning_scroll.spawn(dungeon, x, y)</pre>
+                <span class="crossed-out-text">entity_factories.lightning_scroll.spawn(dungeon, x, y)</span>
+                <span class="new-text">item = copy.deepcopy(lightning_scroll)
+
+            item.place(x, y, dungeon)</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -939,16 +969,16 @@ class SingleRangedAttackHandler(SelectIndexHandler):
 
 +   def __init__(
 +       self,
-+       engine: Engine,
++       engine: game.engine.Engine,
 +       radius: int,
-+       callback: Callable[[Tuple[int, int]], Optional[Action]],
++       callback: Callable[[Tuple[int, int]], Optional[game.actions.Action]],
 +   ):
 +       super().__init__(engine)
 
 +       self.radius = radius
 +       self.callback = callback
 
-+   def on_render(self, console: tcod.Console) -> None:
++   def on_render(self, console: tcod.console.Console) -> None:
 +       """Highlight the tile under the cursor."""
 +       super().on_render(console)
 
@@ -958,13 +988,13 @@ class SingleRangedAttackHandler(SelectIndexHandler):
 +       console.draw_frame(
 +           x=x - self.radius - 1,
 +           y=y - self.radius - 1,
-+           width=self.radius ** 2,
-+           height=self.radius ** 2,
-+           fg=color.red,
++           width=self.radius**2,
++           height=self.radius**2,
++           fg=red,
 +           clear=False,
 +       )
 
-+   def on_index_selected(self, x: int, y: int) -> Optional[Action]:
++   def on_index_selected(self, x: int, y: int) -> Optional[game.actions.Action]:
 +       return self.callback((x, y))
 
 
@@ -982,16 +1012,16 @@ class MainGameEventHandler(EventHandler):
 
     def __init__(
         self,
-        engine: Engine,
+        engine: game.engine.Engine,
         radius: int,
-        callback: Callable[[Tuple[int, int]], Optional[Action]],
+        callback: Callable[[Tuple[int, int]], Optional[game.actions.Action]],
     ):
         super().__init__(engine)
 
         self.radius = radius
         self.callback = callback
 
-    def on_render(self, console: tcod.Console) -> None:
+    def on_render(self, console: tcod.console.Console) -> None:
         """Highlight the tile under the cursor."""
         super().on_render(console)
 
@@ -1001,13 +1031,13 @@ class MainGameEventHandler(EventHandler):
         console.draw_frame(
             x=x - self.radius - 1,
             y=y - self.radius - 1,
-            width=self.radius ** 2,
-            height=self.radius ** 2,
-            fg=color.red,
+            width=self.radius**2,
+            height=self.radius**2,
+            fg=red,
             clear=False,
         )
 
-    def on_index_selected(self, x: int, y: int) -> Optional[Action]:
+    def on_index_selected(self, x: int, y: int) -> Optional[game.actions.Action]:
         return self.callback((x, y))</span>
 
 
@@ -1028,9 +1058,7 @@ To do the damage, we'll need to implement the `Consumable` class for the firebal
 {{< diff-tab >}}
 {{< highlight diff >}}
 ...
-from exceptions import Impossible
--from input_handlers import SingleRangedAttackHandler
-+from input_handlers import AreaRangedAttackHandler, SingleRangedAttackHandler
++from game.input_handlers import ActionOrHandler, AreaRangedAttackHandler, SingleRangedAttackHandler
 
 if TYPE_CHECKING:
     ...
@@ -1045,22 +1073,19 @@ class HealingConsumable(Consumable):
 +       self.damage = damage
 +       self.radius = radius
 
-+   def get_action(self, consumer: Actor) -> Optional[actions.Action]:
-+       self.engine.message_log.add_message(
-+           "Select a target location.", color.needs_target
-+       )
-+       self.engine.event_handler = AreaRangedAttackHandler(
++   def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:
++       self.engine.message_log.add_message("Select a target location.", game.color.needs_target)
++       return AreaRangedAttackHandler(
 +           self.engine,
 +           radius=self.radius,
-+           callback=lambda xy: actions.ItemAction(consumer, self.parent, xy),
++           callback=lambda xy: game.actions.ItemAction(consumer, self.parent, xy),
 +       )
-+       return None
 
-+   def activate(self, action: actions.ItemAction) -> None:
++   def activate(self, action: game.actions.ItemAction) -> None:
 +       target_xy = action.target_xy
 
 +       if not self.engine.game_map.visible[target_xy]:
-+           raise Impossible("You cannot target an area that you cannot see.")
++           raise game.exceptions.Impossible("You cannot target an area that you cannot see.")
 
 +       targets_hit = False
 +       for actor in self.engine.game_map.actors:
@@ -1072,7 +1097,7 @@ class HealingConsumable(Consumable):
 +               targets_hit = True
 
 +       if not targets_hit:
-+           raise Impossible("There are no targets in the radius.")
++           raise game.exceptions.Impossible("There are no targets in the radius.")
 +       self.consume()
 
 
@@ -1082,9 +1107,7 @@ class LightningDamageConsumable(Consumable):
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>...
-from exceptions import Impossible
-<span class="crossed-out-text">from input_handlers import SingleRangedAttackHandler</span>
-<span class="new-text">from input_handlers import AreaRangedAttackHandler, SingleRangedAttackHandler</span>
+<span class="new-text">from game.input_handlers import ActionOrHandler, AreaRangedAttackHandler, SingleRangedAttackHandler</span>
 
 if TYPE_CHECKING:
     ...
@@ -1099,22 +1122,19 @@ class HealingConsumable(Consumable):
         self.damage = damage
         self.radius = radius
 
-    def get_action(self, consumer: Actor) -> Optional[actions.Action]:
-        self.engine.message_log.add_message(
-            "Select a target location.", color.needs_target
-        )
-        self.engine.event_handler = AreaRangedAttackHandler(
+    def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:
+        self.engine.message_log.add_message("Select a target location.", game.color.needs_target)
+        return AreaRangedAttackHandler(
             self.engine,
             radius=self.radius,
-            callback=lambda xy: actions.ItemAction(consumer, self.parent, xy),
+            callback=lambda xy: game.actions.ItemAction(consumer, self.parent, xy),
         )
-        return None
 
-    def activate(self, action: actions.ItemAction) -> None:
+    def activate(self, action: game.actions.ItemAction) -> None:
         target_xy = action.target_xy
 
         if not self.engine.game_map.visible[target_xy]:
-            raise Impossible("You cannot target an area that you cannot see.")
+            raise game.exceptions.Impossible("You cannot target an area that you cannot see.")
 
         targets_hit = False
         for actor in self.engine.game_map.actors:
@@ -1126,7 +1146,7 @@ class HealingConsumable(Consumable):
                 targets_hit = True
 
         if not targets_hit:
-            raise Impossible("There are no targets in the radius.")
+            raise game.exceptions.Impossible("There are no targets in the radius.")
         self.consume()</span>
 
 
@@ -1137,7 +1157,7 @@ class LightningDamageConsumable(Consumable):
 
 `FireballDamageConsumable` takes `damage` and `radius` as arguments in `__init__`, which shouldn't be too surprising.
 
-`get_action`, similar to the confusion scroll, asks the user to select a target, and switches the event handler, this time to `AreaRangedAttackHandler`. The callback is once again a `lambda` function, which is similar to how we handled the confusion scroll.
+`get_action`, similar to the confusion scroll, asks the user to select a target, and returns an `AreaRangedAttackHandler` to handle the targeting. The callback is once again a `lambda` function, which is similar to how we handled the confusion scroll.
 
 `activate` gets the target location, and ensures that it is within the line of sight. It then checks for entities within the radius, damaging any that are close enough to hit (take note, there's no exception for the player, so you can get blasted by your own fireball!). If no enemies were hit at all, the `Impossible` exception is raised, and the scroll isn't consumed, as it would probably be frustrating to waste a scroll on something like a misclick. Assuming at least one entity *was* damaged, the scroll is consumed.
 
@@ -1149,11 +1169,12 @@ Let's add the new fireball scroll to `entity_factories.py` so we can put it to u
 confusion_scroll = Item(
     ...
 )
++
 +fireball_scroll = Item(
 +   char="~",
 +   color=(255, 0, 0),
 +   name="Fireball Scroll",
-+   consumable=consumable.FireballDamageConsumable(damage=12, radius=3),
++   consumable=FireballDamageConsumable(damage=12, radius=3),
 +)
 health_potion = Item(
     ...
@@ -1163,11 +1184,12 @@ health_potion = Item(
 <pre>confusion_scroll = Item(
     ...
 )
+
 <span class="new-text">fireball_scroll = Item(
     char="~",
     color=(255, 0, 0),
     name="Fireball Scroll",
-    consumable=consumable.FireballDamageConsumable(damage=12, radius=3),
+    consumable=FireballDamageConsumable(damage=12, radius=3),
 )</span>
 health_potion = Item(
     ...</pre>
@@ -1180,24 +1202,30 @@ Finally, let's add it to `procgen.py` so it will show up:
 {{< diff-tab >}}
 {{< highlight diff >}}
             if item_chance < 0.7:
-                entity_factories.health_potion.spawn(dungeon, x, y)
+-               entity_factories.health_potion.spawn(dungeon, x, y)
++               item = copy.deepcopy(health_potion)
 +           elif item_chance < 0.8:
-+               entity_factories.fireball_scroll.spawn(dungeon, x, y)
++               item = copy.deepcopy(fireball_scroll)
             elif item_chance < 0.9:
-                entity_factories.confusion_scroll.spawn(dungeon, x, y)
+-               entity_factories.confusion_scroll.spawn(dungeon, x, y)
++               item = copy.deepcopy(confusion_scroll)
             else:
-                entity_factories.lightning_scroll.spawn(dungeon, x, y)
+-               entity_factories.lightning_scroll.spawn(dungeon, x, y)
++               item = copy.deepcopy(lightning_scroll)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>            if item_chance < 0.7:
-                entity_factories.health_potion.spawn(dungeon, x, y)
+                <span class="crossed-out-text">entity_factories.health_potion.spawn(dungeon, x, y)</span>
+                <span class="new-text">item = copy.deepcopy(health_potion)</span>
             <span class="new-text">elif item_chance < 0.8:
-                entity_factories.fireball_scroll.spawn(dungeon, x, y)</span>
+                item = copy.deepcopy(fireball_scroll)</span>
             elif item_chance < 0.9:
-                entity_factories.confusion_scroll.spawn(dungeon, x, y)
+                <span class="crossed-out-text">entity_factories.confusion_scroll.spawn(dungeon, x, y)</span>
+                <span class="new-text">item = copy.deepcopy(confusion_scroll)</span>
             else:
-                entity_factories.lightning_scroll.spawn(dungeon, x, y)</pre>
+                <span class="crossed-out-text">entity_factories.lightning_scroll.spawn(dungeon, x, y)</span>
+                <span class="new-text">item = copy.deepcopy(lightning_scroll)</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 

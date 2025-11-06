@@ -32,19 +32,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from components.base_component import BaseComponent
-from equipment_types import EquipmentType
+import game.components.base_component
+import game.equipment_types
 
 if TYPE_CHECKING:
-    from entity import Item
+    import game.entity
 
 
-class Equippable(BaseComponent):
-    parent: Item
+class Equippable(game.components.base_component.BaseComponent):
+    parent: game.entity.Item
 
     def __init__(
         self,
-        equipment_type: EquipmentType,
+        equipment_type: game.equipment_types.EquipmentType,
         power_bonus: int = 0,
         defense_bonus: int = 0,
     ):
@@ -56,22 +56,22 @@ class Equippable(BaseComponent):
 
 class Dagger(Equippable):
     def __init__(self) -> None:
-        super().__init__(equipment_type=EquipmentType.WEAPON, power_bonus=2)
+        super().__init__(equipment_type=game.equipment_types.EquipmentType.WEAPON, power_bonus=2)
 
 
 class Sword(Equippable):
     def __init__(self) -> None:
-        super().__init__(equipment_type=EquipmentType.WEAPON, power_bonus=4)
+        super().__init__(equipment_type=game.equipment_types.EquipmentType.WEAPON, power_bonus=4)
 
 
 class LeatherArmor(Equippable):
     def __init__(self) -> None:
-        super().__init__(equipment_type=EquipmentType.ARMOR, defense_bonus=1)
+        super().__init__(equipment_type=game.equipment_types.EquipmentType.ARMOR, defense_bonus=1)
 
 
 class ChainMail(Equippable):
     def __init__(self) -> None:
-        super().__init__(equipment_type=EquipmentType.ARMOR, defense_bonus=3)
+        super().__init__(equipment_type=game.equipment_types.EquipmentType.ARMOR, defense_bonus=3)
 ```
 
 Aside from creating the `Equippable` class, as described earlier, we've also created a few types of equippable components, for each equippable entity that we'll end up creating, similar to what we did with the `Consumable` classes. You don't have to do it this way, you could just define these when creating the entities, but you might want to add additional functionality to weapons and armor at some point, and defining the `Equippable` classes this way might make that easier. You might also want to move these classes to their own file, but that's outside the scope of this tutorial.
@@ -83,13 +83,13 @@ To create the actual equippable entities, we'll want to adjust our `Item` class.
 {{< highlight diff >}}
 ...
 if TYPE_CHECKING:
-    from components.ai import BaseAI
-    from components.consumable import Consumable
-+   from components.equippable import Equippable
-    from components.fighter import Fighter
-    from components.inventory import Inventory
-    from components.level import Level
-    from game_map import GameMap
+    import game.components.ai
+    import game.components.consumable
++   import game.components.equippable
+    import game.components.fighter
+    import game.components.inventory
+    import game.components.level
+    import game.game_map
 ...
 
 class Item(Entity):
@@ -101,42 +101,45 @@ class Item(Entity):
         char: str = "?",
         color: Tuple[int, int, int] = (255, 255, 255),
         name: str = "<Unnamed>",
--       consumable: Consumable,
-+       consumable: Optional[Consumable] = None,
-+       equippable: Optional[Equippable] = None,
+-       consumable: game.components.consumable.Consumable,
++       consumable: Optional[game.components.consumable.Consumable] = None,
++       equippable: Optional[game.components.equippable.Equippable] = None,
     ):
         super().__init__(
+            parent=None,
             x=x,
             y=y,
             char=char,
             color=color,
             name=name,
             blocks_movement=False,
-            render_order=RenderOrder.ITEM,
         )
 
         self.consumable = consumable
--       self.consumable.parent = self
+-
+-       if self.consumable:
+-           self.consumable.parent = self
 
 +       if self.consumable:
 +           self.consumable.parent = self
 
 +       self.equippable = equippable
-
 +       if self.equippable:
 +           self.equippable.parent = self
+
++       self.render_order = RenderOrder.ITEM
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>...
 if TYPE_CHECKING:
-    from components.ai import BaseAI
-    from components.consumable import Consumable
-    <span class="new-text">from components.equippable import Equippable</span>
-    from components.fighter import Fighter
-    from components.inventory import Inventory
-    from components.level import Level
-    from game_map import GameMap
+    import game.components.ai
+    import game.components.consumable
+    <span class="new-text">import game.components.equippable</span>
+    import game.components.fighter
+    import game.components.inventory
+    import game.components.level
+    import game.game_map
 ...
 
 class Item(Entity):
@@ -148,30 +151,30 @@ class Item(Entity):
         char: str = "?",
         color: Tuple[int, int, int] = (255, 255, 255),
         name: str = "&lt;Unnamed&gt;",
-        <span class="crossed-out-text">consumable: Consumable,</span>
-        <span class="new-text">consumable: Optional[Consumable] = None,
-        equippable: Optional[Equippable] = None,</span>
+        <span class="crossed-out-text">consumable: game.components.consumable.Consumable,</span>
+        <span class="new-text">consumable: Optional[game.components.consumable.Consumable] = None,
+        equippable: Optional[game.components.equippable.Equippable] = None,</span>
     ):
         super().__init__(
+            parent=None,
             x=x,
             y=y,
             char=char,
             color=color,
             name=name,
             blocks_movement=False,
-            render_order=RenderOrder.ITEM,
         )
 
         self.consumable = consumable
-        <span class="crossed-out-text">self.consumable.parent = self</span>
 
         <span class="new-text">if self.consumable:
             self.consumable.parent = self
 
         self.equippable = equippable
-
         if self.equippable:
-            self.equippable.parent = self</span></pre>
+            self.equippable.parent = self
+
+        self.render_order = RenderOrder.ITEM</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -209,70 +212,110 @@ In order to actually create the equippable entities, we'll want to add a few exa
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-from components.ai import HostileEnemy
--from components import consumable
-+from components import consumable, equippable
-from components.fighter import Fighter
-from components.inventory import Inventory
-from components.level import Level
+from game.components.ai import HostileEnemy
+-from game.components.consumable import (
+-    ConfusionConsumable,
+-    FireballDamageConsumable,
+-    HealingConsumable,
+-    LightningDamageConsumable,
+-)
++from game.components.consumable import (
++    ConfusionConsumable,
++    FireballDamageConsumable,
++    HealingConsumable,
++    LightningDamageConsumable,
++)
++from game.components.equipment import Equipment
++from game.components.equippable import ChainMail, Dagger, LeatherArmor, Sword
+from game.components.fighter import Fighter
+from game.components.inventory import Inventory
+from game.components.level import Level
 
 ...
 lightning_scroll = Item(
     char="~",
     color=(255, 255, 0),
     name="Lightning Scroll",
-    consumable=consumable.LightningDamageConsumable(damage=20, maximum_range=5),
+    consumable=LightningDamageConsumable(damage=20, maximum_range=5),
 )
 
 +dagger = Item(
-+   char="/", color=(0, 191, 255), name="Dagger", equippable=equippable.Dagger()
++    char="/",
++    color=(0, 191, 255),
++    name="Dagger",
++    equippable=Dagger(),
 +)
 +
-+sword = Item(char="/", color=(0, 191, 255), name="Sword", equippable=equippable.Sword())
++sword = Item(
++    char="/",
++    color=(0, 191, 255),
++    name="Sword",
++    equippable=Sword(),
++)
 
 +leather_armor = Item(
-+   char="[",
-+   color=(139, 69, 19),
-+   name="Leather Armor",
-+   equippable=equippable.LeatherArmor(),
++    char="[",
++    color=(139, 69, 19),
++    name="Leather Armor",
++    equippable=LeatherArmor(),
 +)
 
 +chain_mail = Item(
-+   char="[", color=(139, 69, 19), name="Chain Mail", equippable=equippable.ChainMail()
++    char="[",
++    color=(139, 69, 19),
++    name="Chain Mail",
++    equippable=ChainMail(),
 +)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>from components.ai import HostileEnemy
-<span class="crossed-out-text">from components import consumable</span>
-<span class="new-text">from components import consumable, equippable</span>
-from components.fighter import Fighter
-from components.inventory import Inventory
-from components.level import Level
+<pre>from game.components.ai import HostileEnemy
+from game.components.consumable import (
+    ConfusionConsumable,
+    FireballDamageConsumable,
+    HealingConsumable,
+    LightningDamageConsumable,
+)
+<span class="new-text">from game.components.equipment import Equipment
+from game.components.equippable import ChainMail, Dagger, LeatherArmor, Sword</span>
+from game.components.fighter import Fighter
+from game.components.inventory import Inventory
+from game.components.level import Level
 
 ...
 lightning_scroll = Item(
     char="~",
     color=(255, 255, 0),
     name="Lightning Scroll",
-    consumable=consumable.LightningDamageConsumable(damage=20, maximum_range=5),
+    consumable=LightningDamageConsumable(damage=20, maximum_range=5),
 )
 
 <span class="new-text">dagger = Item(
-    char="/", color=(0, 191, 255), name="Dagger", equippable=equippable.Dagger()
+    char="/",
+    color=(0, 191, 255),
+    name="Dagger",
+    equippable=Dagger(),
 )
 
-sword = Item(char="/", color=(0, 191, 255), name="Sword", equippable=equippable.Sword())
+sword = Item(
+    char="/",
+    color=(0, 191, 255),
+    name="Sword",
+    equippable=Sword(),
+)
 
 leather_armor = Item(
     char="[",
     color=(139, 69, 19),
     name="Leather Armor",
-    equippable=equippable.LeatherArmor(),
+    equippable=LeatherArmor(),
 )
 
 chain_mail = Item(
-    char="[", color=(139, 69, 19), name="Chain Mail", equippable=equippable.ChainMail()
+    char="[",
+    color=(139, 69, 19),
+    name="Chain Mail",
+    equippable=ChainMail(),
 )</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
@@ -284,19 +327,19 @@ To handle the equipment that the player has equipped at the moment, we can creat
 ```py3
 from __future__ import annotations
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
-from components.base_component import BaseComponent
-from equipment_types import EquipmentType
+import game.components.base_component
+import game.equipment_types
 
 if TYPE_CHECKING:
-    from entity import Actor, Item
+    import game.entity
 
 
-class Equipment(BaseComponent):
-    parent: Actor
+class Equipment(game.components.base_component.BaseComponent):
+    parent: game.entity.Actor
 
-    def __init__(self, weapon: Optional[Item] = None, armor: Optional[Item] = None):
+    def __init__(self, weapon: Optional[game.entity.Item] = None, armor: Optional[game.entity.Item] = None):
         self.weapon = weapon
         self.armor = armor
 
@@ -324,20 +367,16 @@ class Equipment(BaseComponent):
 
         return bonus
 
-    def item_is_equipped(self, item: Item) -> bool:
+    def item_is_equipped(self, item: game.entity.Item) -> bool:
         return self.weapon == item or self.armor == item
 
     def unequip_message(self, item_name: str) -> None:
-        self.parent.gamemap.engine.message_log.add_message(
-            f"You remove the {item_name}."
-        )
+        self.parent.parent.engine.message_log.add_message(f"You remove the {item_name}.")
 
     def equip_message(self, item_name: str) -> None:
-        self.parent.gamemap.engine.message_log.add_message(
-            f"You equip the {item_name}."
-        )
+        self.parent.parent.engine.message_log.add_message(f"You equip the {item_name}.")
 
-    def equip_to_slot(self, slot: str, item: Item, add_message: bool) -> None:
+    def equip_to_slot(self, slot: str, item: game.entity.Item, add_message: bool) -> None:
         current_item = getattr(self, slot)
 
         if current_item is not None:
@@ -356,10 +395,10 @@ class Equipment(BaseComponent):
 
         setattr(self, slot, None)
 
-    def toggle_equip(self, equippable_item: Item, add_message: bool = True) -> None:
+    def toggle_equip(self, equippable_item: game.entity.Item, add_message: bool = True) -> None:
         if (
             equippable_item.equippable
-            and equippable_item.equippable.equipment_type == EquipmentType.WEAPON
+            and equippable_item.equippable.equipment_type == game.equipment_types.EquipmentType.WEAPON
         ):
             slot = "weapon"
         else:
@@ -487,14 +526,14 @@ Let's add this component to the actors now. `entity.py` and add these lines:
 {{< highlight diff >}}
 ...
 if TYPE_CHECKING:
-    from components.ai import BaseAI
-    from components.consumable import Consumable
-+   from components.equipment import Equipment
-    from components.equippable import Equippable
-    from components.fighter import Fighter
-    from components.inventory import Inventory
-    from components.level import Level
-    from game_map import GameMap
+    import game.components.ai
+    import game.components.consumable
++   import game.components.equipment
+    import game.components.equippable
+    import game.components.fighter
+    import game.components.inventory
+    import game.components.level
+    import game.game_map
 ...
 
 class Actor(Entity):
@@ -506,25 +545,25 @@ class Actor(Entity):
         char: str = "?",
         color: Tuple[int, int, int] = (255, 255, 255),
         name: str = "<Unnamed>",
-        ai_cls: Type[BaseAI],
-+       equipment: Equipment,
-        fighter: Fighter,
-        inventory: Inventory,
-        level: Level,
+        ai_cls: Type[game.components.ai.BaseAI],
++       equipment: game.components.equipment.Equipment,
+        fighter: game.components.fighter.Fighter,
+        inventory: game.components.inventory.Inventory,
+        level: game.components.level.Level,
     ):
         super().__init__(
+            parent=None,
             x=x,
             y=y,
             char=char,
             color=color,
             name=name,
             blocks_movement=True,
-            render_order=RenderOrder.ACTOR,
         )
 
-        self.ai: Optional[BaseAI] = ai_cls(self)
+        self.ai: Optional[game.components.ai.BaseAI] = ai_cls(self) if ai_cls else None
 
-+       self.equipment: Equipment = equipment
++       self.equipment = equipment
 +       self.equipment.parent = self
 
         self.fighter = fighter
@@ -536,14 +575,14 @@ class Actor(Entity):
 {{< original-tab >}}
 <pre>...
 if TYPE_CHECKING:
-    from components.ai import BaseAI
-    from components.consumable import Consumable
-    <span class="new-text">from components.equipment import Equipment</span>
-    from components.equippable import Equippable
-    from components.fighter import Fighter
-    from components.inventory import Inventory
-    from components.level import Level
-    from game_map import GameMap
+    import game.components.ai
+    import game.components.consumable
+    <span class="new-text">import game.components.equipment</span>
+    import game.components.equippable
+    import game.components.fighter
+    import game.components.inventory
+    import game.components.level
+    import game.game_map
 ...
 
 class Actor(Entity):
@@ -555,25 +594,25 @@ class Actor(Entity):
         char: str = "?",
         color: Tuple[int, int, int] = (255, 255, 255),
         name: str = "&lt;Unnamed&gt;",
-        ai_cls: Type[BaseAI],
-        <span class="new-text">equipment: Equipment,</span>
-        fighter: Fighter,
-        inventory: Inventory,
-        level: Level,
+        ai_cls: Type[game.components.ai.BaseAI],
+        <span class="new-text">equipment: game.components.equipment.Equipment,</span>
+        fighter: game.components.fighter.Fighter,
+        inventory: game.components.inventory.Inventory,
+        level: game.components.level.Level,
     ):
         super().__init__(
+            parent=None,
             x=x,
             y=y,
             char=char,
             color=color,
             name=name,
             blocks_movement=True,
-            render_order=RenderOrder.ACTOR,
         )
 
-        self.ai: Optional[BaseAI] = ai_cls(self)
+        self.ai: Optional[game.components.ai.BaseAI] = ai_cls(self) if ai_cls else None
 
-        <span class="new-text">self.equipment: Equipment = equipment
+        <span class="new-text">self.equipment = equipment
         self.equipment.parent = self</span>
 
         self.fighter = fighter
@@ -588,12 +627,18 @@ We also need to update `entity_factories.py` once again, to create the actors wi
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-from components.ai import HostileEnemy
-from components import consumable, equippable
-+from components.equipment import Equipment
-from components.fighter import Fighter
-from components.inventory import Inventory
-from components.level import Level
+from game.components.ai import HostileEnemy
+from game.components.consumable import (
+    ConfusionConsumable,
+    FireballDamageConsumable,
+    HealingConsumable,
+    LightningDamageConsumable,
+)
++from game.components.equipment import Equipment
+from game.components.equippable import ChainMail, Dagger, LeatherArmor, Sword
+from game.components.fighter import Fighter
+from game.components.inventory import Inventory
+from game.components.level import Level
 
 
 player = Actor(
@@ -602,7 +647,8 @@ player = Actor(
     name="Player",
     ai_cls=HostileEnemy,
 +   equipment=Equipment(),
-    fighter=Fighter(hp=30, base_defense=1, base_power=2),
+-   fighter=Fighter(hp=30, base_defense=2, base_power=5),
++   fighter=Fighter(hp=30, base_defense=1, base_power=2),
     inventory=Inventory(capacity=26),
     level=Level(level_up_base=200),
 )
@@ -630,12 +676,18 @@ troll = Actor(
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>from components.ai import HostileEnemy
-from components import consumable, equippable
-<span class="new-text">from components.equipment import Equipment</span>
-from components.fighter import Fighter
-from components.inventory import Inventory
-from components.level import Level
+<pre>from game.components.ai import HostileEnemy
+from game.components.consumable import (
+    ConfusionConsumable,
+    FireballDamageConsumable,
+    HealingConsumable,
+    LightningDamageConsumable,
+)
+<span class="new-text">from game.components.equipment import Equipment</span>
+from game.components.equippable import ChainMail, Dagger, LeatherArmor, Sword
+from game.components.fighter import Fighter
+from game.components.inventory import Inventory
+from game.components.level import Level
 
 
 player = Actor(
@@ -835,7 +887,7 @@ player = Actor(
     name="Player",
     ai_cls=HostileEnemy,
     equipment=Equipment(),
--   fighter=Fighter(hp=30, defense=2, power=5),
+-   fighter=Fighter(hp=30, base_defense=2, base_power=5),
 +   fighter=Fighter(hp=30, base_defense=1, base_power=2),
     inventory=Inventory(capacity=26),
     level=Level(level_up_base=200),
@@ -846,8 +898,7 @@ orc = Actor(
     name="Orc",
     ai_cls=HostileEnemy,
     equipment=Equipment(),
--   fighter=Fighter(hp=10, defense=0, power=3),
-+   fighter=Fighter(hp=10, base_defense=0, base_power=3),
+    fighter=Fighter(hp=10, base_defense=0, base_power=3),
     inventory=Inventory(capacity=0),
     level=Level(xp_given=35),
 )
@@ -857,8 +908,7 @@ troll = Actor(
     name="Troll",
     ai_cls=HostileEnemy,
     equipment=Equipment(),
--   fighter=Fighter(hp=16, defense=1, power=4),
-+   fighter=Fighter(hp=16, base_defense=1, base_power=4),
+    fighter=Fighter(hp=16, base_defense=1, base_power=4),
     inventory=Inventory(capacity=0),
     level=Level(xp_given=100),
 )
@@ -872,7 +922,7 @@ troll = Actor(
     name="Player",
     ai_cls=HostileEnemy,
     equipment=Equipment(),
-    <span class="crossed-out-text">fighter=Fighter(hp=30, defense=2, power=5),</span>
+    <span class="crossed-out-text">fighter=Fighter(hp=30, base_defense=2, base_power=5),</span>
     <span class="new-text">fighter=Fighter(hp=30, base_defense=1, base_power=2),</span>
     inventory=Inventory(capacity=26),
     level=Level(level_up_base=200),
@@ -883,8 +933,7 @@ orc = Actor(
     name="Orc",
     ai_cls=HostileEnemy,
     equipment=Equipment(),
-    <span class="crossed-out-text">fighter=Fighter(hp=10, defense=0, power=3),</span>
-    <span class="new-text">fighter=Fighter(hp=10, base_defense=0, base_power=3),</span>
+    fighter=Fighter(hp=10, base_defense=0, base_power=3),
     inventory=Inventory(capacity=0),
     level=Level(xp_given=35),
 )
@@ -894,8 +943,7 @@ troll = Actor(
     name="Troll",
     ai_cls=HostileEnemy,
     equipment=Equipment(),
-    <span class="crossed-out-text">fighter=Fighter(hp=16, defense=1, power=4),</span>
-    <span class="new-text">fighter=Fighter(hp=16, base_defense=1, base_power=4),</span>
+    fighter=Fighter(hp=16, base_defense=1, base_power=4),
     inventory=Inventory(capacity=0),
     level=Level(xp_given=100),
 )
@@ -910,24 +958,24 @@ Now all that's left to do is allow generate the equipment to the map, and allow 
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-item_chances: Dict[int, List[Tuple[Entity, int]]] = {
-    0: [(entity_factories.health_potion, 35)],
-    2: [(entity_factories.confusion_scroll, 10)],
--   4: [(entity_factories.lightning_scroll, 25)],
--   6: [(entity_factories.fireball_scroll, 25)],
-+   4: [(entity_factories.lightning_scroll, 25), (entity_factories.sword, 5)],
-+   6: [(entity_factories.fireball_scroll, 25), (entity_factories.chain_mail, 15)],
+item_chances: Dict[int, List[Tuple[game.entity.Entity, int]]] = {
+    0: [(game.entity_factories.health_potion, 35)],
+    2: [(game.entity_factories.confusion_scroll, 10)],
+-   4: [(game.entity_factories.lightning_scroll, 25)],
+-   6: [(game.entity_factories.fireball_scroll, 25)],
++   4: [(game.entity_factories.lightning_scroll, 25), (game.entity_factories.sword, 5)],
++   6: [(game.entity_factories.fireball_scroll, 25), (game.entity_factories.chain_mail, 15)],
 }
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>item_chances: Dict[int, List[Tuple[Entity, int]]] = {
-    0: [(entity_factories.health_potion, 35)],
-    2: [(entity_factories.confusion_scroll, 10)],
-    <span class="crossed-out-text">4: [(entity_factories.lightning_scroll, 25)],</span>
-    <span class="crossed-out-text">6: [(entity_factories.fireball_scroll, 25)],</span>
-    <span class="new-text">4: [(entity_factories.lightning_scroll, 25), (entity_factories.sword, 5)],</span>
-    <span class="new-text">6: [(entity_factories.fireball_scroll, 25), (entity_factories.chain_mail, 15)],</span>
+<pre>item_chances: Dict[int, List[Tuple[game.entity.Entity, int]]] = {
+    0: [(game.entity_factories.health_potion, 35)],
+    2: [(game.entity_factories.confusion_scroll, 10)],
+    <span class="crossed-out-text">4: [(game.entity_factories.lightning_scroll, 25)],</span>
+    <span class="crossed-out-text">6: [(game.entity_factories.fireball_scroll, 25)],</span>
+    <span class="new-text">4: [(game.entity_factories.lightning_scroll, 25), (game.entity_factories.sword, 5)],</span>
+    <span class="new-text">6: [(game.entity_factories.fireball_scroll, 25), (game.entity_factories.chain_mail, 15)],</span>
 }</pre>
 {{</ original-tab >}}
 {{</ codetab >}}
@@ -945,13 +993,15 @@ class DropItem(ItemAction):
 
 
 +class EquipAction(Action):
-+   def __init__(self, entity: Actor, item: Item):
-+       super().__init__(entity)
-
-+       self.item = item
-
-+   def perform(self) -> None:
-+       self.entity.equipment.toggle_equip(self.item)
++    def __init__(self, entity: game.entity.Actor, item: game.entity.Item):
++        super().__init__(entity)
++
++        self.item = item
++
++    def perform(self) -> None:
++        # Type check to ensure entity is an Actor with equipment
++        assert isinstance(self.entity, game.entity.Actor), "Entity must be an Actor for equipment access"
++        self.entity.equipment.toggle_equip(self.item)
 
 
 class WaitAction(Action):
@@ -965,12 +1015,14 @@ class DropItem(ItemAction):
 
 
 <span class="new-text">class EquipAction(Action):
-    def __init__(self, entity: Actor, item: Item):
+    def __init__(self, entity: game.entity.Actor, item: game.entity.Item):
         super().__init__(entity)
 
         self.item = item
 
     def perform(self) -> None:
+        # Type check to ensure entity is an Actor with equipment
+        assert isinstance(self.entity, game.entity.Actor), "Entity must be an Actor for equipment access"
         self.entity.equipment.toggle_equip(self.item)</span>
 
 
@@ -989,7 +1041,7 @@ Modify `input_handlers.py` like this:
 {{< diff-tab >}}
 {{< highlight diff >}}
 class InventoryEventHandler(AskUserEventHandler):
-    def on_render(self, console: tcod.Console) -> None:
+    def on_render(self, console: tcod.console.Console) -> None:
         ...
 
         if number_of_items_in_inventory > 0:
@@ -1015,15 +1067,18 @@ class InventoryActivateHandler(InventoryEventHandler):
 
     TITLE = "Select an item to use"
 
-    def on_item_selected(self, item: Item) -> Optional[ActionOrHandler]:
+    def on_item_selected(self, item: game.entity.Item) -> Optional[ActionOrHandler]:
 -       """Return the action for the selected item."""
--       return item.consumable.get_action(self.engine.player)
+-       if item.consumable is not None:
+-           return item.consumable.get_action(self.engine.player)
 +       if item.consumable:
-+           # Return the action for the selected item.
++           # Try to return the action for this item.
 +           return item.consumable.get_action(self.engine.player)
 +       elif item.equippable:
-+           return actions.EquipAction(self.engine.player, item)
-+       else:
++           return game.actions.EquipAction(self.engine.player, item)
+        else:
+-           return None
++           self.engine.message_log.add_message("This item cannot be used.", game.color.invalid)
 +           return None
 
 
@@ -1033,7 +1088,7 @@ class InventoryDropHandler(InventoryEventHandler):
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>class InventoryEventHandler(AskUserEventHandler):
-    def on_render(self, console: tcod.Console) -> None:
+    def on_render(self, console: tcod.console.Console) -> None:
         ...
 
         if number_of_items_in_inventory > 0:
@@ -1059,16 +1114,18 @@ class InventoryActivateHandler(InventoryEventHandler):
 
     TITLE = "Select an item to use"
 
-    def on_item_selected(self, item: Item) -> Optional[ActionOrHandler]:
-        <span class="crossed-out-text">"""Return the action for the selected item."""</span>
-        <span class="crossed-out-text">return item.consumable.get_action(self.engine.player)</span>
+    def on_item_selected(self, item: game.entity.Item) -> Optional[ActionOrHandler]:
+        <span class="crossed-out-text">"""Return the action for the selected item."""
+        if item.consumable is not None:
+            return item.consumable.get_action(self.engine.player)</span>
         <span class="new-text">if item.consumable:
-            # Return the action for the selected item.
+            # Try to return the action for this item.
             return item.consumable.get_action(self.engine.player)
         elif item.equippable:
-            return actions.EquipAction(self.engine.player, item)
+            return game.actions.EquipAction(self.engine.player, item)</span>
         else:
-            return None</span>
+            <span class="new-text">self.engine.message_log.add_message("This item cannot be used.", game.color.invalid)</span>
+            return None
 
 
 class InventoryDropHandler(InventoryEventHandler):
@@ -1110,38 +1167,34 @@ One last thing we can do is give the player a bit of equipment to start. We'll s
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-def new_game() -> Engine:
+def new_game() -> game.engine.Engine:
     ...
 
-    engine.message_log.add_message(
-        "Hello and welcome, adventurer, to yet another dungeon!", color.welcome_text
-    )
-
-+   dagger = copy.deepcopy(entity_factories.dagger)
-+   leather_armor = copy.deepcopy(entity_factories.leather_armor)
-
++   engine = game.engine.Engine(player=player)
++
++   dagger = copy.deepcopy(game.entity_factories.dagger)
++   leather_armor = copy.deepcopy(game.entity_factories.leather_armor)
++
 +   dagger.parent = player.inventory
 +   leather_armor.parent = player.inventory
-
++
 +   player.inventory.items.append(dagger)
 +   player.equipment.toggle_equip(dagger, add_message=False)
-
++
 +   player.inventory.items.append(leather_armor)
 +   player.equipment.toggle_equip(leather_armor, add_message=False)
-
-    return engine
++
++   engine.game_world = game.game_map.GameWorld(
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>def new_game() -> Engine:
+<pre>def new_game() -> game.engine.Engine:
     ...
 
-    engine.message_log.add_message(
-        "Hello and welcome, adventurer, to yet another dungeon!", color.welcome_text
-    )
+    <span class="new-text">engine = game.engine.Engine(player=player)
 
-    <span class="new-text">dagger = copy.deepcopy(entity_factories.dagger)
-    leather_armor = copy.deepcopy(entity_factories.leather_armor)
+    dagger = copy.deepcopy(game.entity_factories.dagger)
+    leather_armor = copy.deepcopy(game.entity_factories.leather_armor)
 
     dagger.parent = player.inventory
     leather_armor.parent = player.inventory
@@ -1150,9 +1203,9 @@ def new_game() -> Engine:
     player.equipment.toggle_equip(dagger, add_message=False)
 
     player.inventory.items.append(leather_armor)
-    player.equipment.toggle_equip(leather_armor, add_message=False)</span>
+    player.equipment.toggle_equip(leather_armor, add_message=False)
 
-    return engine</pre>
+    engine.game_world = game.game_map.GameWorld(</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 

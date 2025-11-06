@@ -16,6 +16,8 @@ bar_empty = (0x40, 0x10, 0x10)
 
 +menu_title = (255, 255, 63)
 +menu_text = white
++
++error = (0xFF, 0x40, 0x40)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
@@ -23,7 +25,9 @@ bar_empty = (0x40, 0x10, 0x10)
 bar_empty = (0x40, 0x10, 0x10)
 
 <span class="new-text">menu_title = (255, 255, 63)
-menu_text = white</span></pre>
+menu_text = white
+
+error = (0xFF, 0x40, 0x40)</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -58,7 +62,7 @@ class Impossible(Exception):
 {{</ original-tab >}}
 {{</ codetab >}}
 
-Now we'll set up an event handler system that will make managing menus and game states much cleaner. By creating a base class that can return either an Action or an EventHandler, handlers can switch to each other simply by returning the next handler. This eliminates the need for the `Engine` class to manage event handlers directly - instead, we'll track the active handler in `main.py`, keeping a clear separation of concerns.
+There's a bit of refactoring we can do to make things easier for ourselves in the future: By creating a base class that can return either an Action or an EventHandler, we don't need to set the engine's "event handler" to the new handler when we want to switch - we can just return that event handler instead. A benefit of this is that the `Engine` class won't need to store the event handler anymore. This works by keeping track of the handler in the `main.py` file instead, and switching it when necessary.
 
 To make the change, start by adding the following to `input_handlers.py`:
 
