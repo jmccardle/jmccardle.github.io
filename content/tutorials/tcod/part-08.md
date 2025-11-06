@@ -1,6 +1,6 @@
 ---
 title: "Part 8 - Items and Inventory"
-date: 2020-07-14
+date: 2025-08-25
 draft: false
 ---
 
