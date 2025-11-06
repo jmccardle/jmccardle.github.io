@@ -1,6 +1,6 @@
 ---
 title: "Part 12 - Increasing Difficulty"
-date: 2020-07-28
+date: 2025-11-05
 draft: false
 ---
 
@@ -608,10 +608,10 @@ Putting this function to use is quite simple. In fact, it will reduce the amount
 {{< highlight diff >}}
 def place_entities(room: RectangularRoom, dungeon: GameMap, floor_number: int,) -> None:
     number_of_monsters = random.randint(
-        0, get_weight_for_floor(max_monsters_by_floor, floor_number)
+        0, get_max_value_for_floor(max_monsters_by_floor, floor_number)
     )
     number_of_items = random.randint(
-        0, get_weight_for_floor(max_items_by_floor, floor_number)
+        0, get_max_value_for_floor(max_items_by_floor, floor_number)
     )
 
 +   monsters: List[Entity] = get_entities_at_random(
@@ -655,10 +655,10 @@ def place_entities(room: RectangularRoom, dungeon: GameMap, floor_number: int,) 
 {{< original-tab >}}
 <pre>def place_entities(room: RectangularRoom, dungeon: GameMap, floor_number: int,) -> None:
     number_of_monsters = random.randint(
-        0, get_weight_for_floor(max_monsters_by_floor, floor_number)
+        0, get_max_value_for_floor(max_monsters_by_floor, floor_number)
     )
     number_of_items = random.randint(
-        0, get_weight_for_floor(max_items_by_floor, floor_number)
+        0, get_max_value_for_floor(max_items_by_floor, floor_number)
     )
 
     <span class="new-text">monsters: List[Entity] = get_entities_at_random(
@@ -704,6 +704,6 @@ Now `place_entities` is just getting the amount of monsters and items to generat
 
 With those changes, the dungeon will get progressively more difficult! You may want to tweak certain numbers, like the strength of the enemies or how much health you recover with potions, to get a more challenging experience (our game is still not _that_ difficult, if you increase your defense by just 1, Orcs are no longer a threat).
 
-If you want to see the code so far in its entirety, [click here](https://github.com/TStand90/tcod_tutorial_v2/tree/2020/part-12).
+If you want to see the code so far in its entirety, [click here](https://github.com/jmccardle/tcod_tutorial_v2/tree/part-12).
 
-[Click here to move on to the next part of this tutorial.](/tutorials/tcod/v2/part-13)
+[Click here to move on to the next part of this tutorial.](/tutorials/tcod/part-13)

@@ -1,6 +1,6 @@
 ---
 title: "Part 11 - Delving into the Dungeon"
-date: 2020-07-21
+date: 2025-11-05
 draft: false
 ---
 
@@ -187,7 +187,7 @@ class GameMap:
 +   def __init__(
 +       self,
 +       *,
-+       engine: Engine,
++       engine: game.engine.Engine,
 +       map_width: int,
 +       map_height: int,
 +       max_rooms: int,
@@ -195,7 +195,7 @@ class GameMap:
 +       room_max_size: int,
 +       max_monsters_per_room: int,
 +       max_items_per_room: int,
-+       current_floor: int = 0
++       current_floor: int = 0,
 +   ):
 +       self.engine = engine
 
@@ -213,7 +213,7 @@ class GameMap:
 +       self.current_floor = current_floor
 
 +   def generate_floor(self) -> None:
-+       from procgen import generate_dungeon
++       from game.procgen import generate_dungeon
 
 +       self.current_floor += 1
 
@@ -242,7 +242,7 @@ class GameMap:
     def __init__(
         self,
         *,
-        engine: Engine,
+        engine: game.engine.Engine,
         map_width: int,
         map_height: int,
         max_rooms: int,
@@ -250,7 +250,7 @@ class GameMap:
         room_max_size: int,
         max_monsters_per_room: int,
         max_items_per_room: int,
-        current_floor: int = 0
+        current_floor: int = 0,
     ):
         self.engine = engine
 
@@ -268,7 +268,7 @@ class GameMap:
         self.current_floor = current_floor
 
     def generate_floor(self) -> None:
-        from procgen import generate_dungeon
+        from game.procgen import generate_dungeon
 
         self.current_floor += 1
 
@@ -294,32 +294,34 @@ In order to utilize the new `GameWorld` class, we'll need to add it to the `Engi
 {{< highlight diff >}}
 ...
 if TYPE_CHECKING:
-    from entity import Actor
--   from game_map import GameMap
-+   from game_map import GameMap, GameWorld
+-   from game.entity import Actor
+-   from game.game_map import GameMap
++   import game.game_map
 
 
 class Engine:
-    game_map: GameMap
-+   game_world: GameWorld
+    game_map: game.game_map.GameMap
++   game_world: game.game_map.GameWorld
 
-    def __init__(self, player: Actor):
+-   def __init__(self, player: Actor):
++   def __init__(self, player: game.entity.Actor):
         ...
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>...
 if TYPE_CHECKING:
-    from entity import Actor
-    <span class="crossed-out-text">from game_map import GameMap</span>
-    <span class="new-text">from game_map import GameMap, GameWorld</span>
+    <span class="crossed-out-text">from game.entity import Actor</span>
+    <span class="crossed-out-text">from game.game_map import GameMap</span>
+    <span class="new-text">import game.game_map</span>
 
 
 class Engine:
-    game_map: GameMap
-    <span class="new-text">game_world: GameWorld</span>
+    game_map: game.game_map.GameMap
+    <span class="new-text">game_world: game.game_map.GameWorld</span>
 
-    def __init__(self, player: Actor):
+    <span class="crossed-out-text">def __init__(self, player: Actor):</span>
+    <span class="new-text">def __init__(self, player: game.entity.Actor):</span>
         ...</pre>
 {{</ original-tab >}}
 {{</ codetab >}}
@@ -330,19 +332,21 @@ Pretty simple. To utilize the new `game_world` class attribute, edit `setup_game
 {{< diff-tab >}}
 {{< highlight diff >}}
 import tcod
-import color
-from engine import Engine
-import entity_factories
-+from game_map import GameWorld
-import input_handlers
--from procgen import generate_dungeon
+import game.color
+-from game.engine import Engine
++import game.engine
+import game.entity_factories
++import game.game_map
+import game.input_handlers
++import game.procgen
 ...
 
     ...
-    engine = Engine(player=player)
+-   engine = Engine(player=player)
++   engine = game.engine.Engine(player=player)
 
 -   engine.game_map = generate_dungeon(
-+   engine.game_world = GameWorld(
++   engine.game_world = game.game_map.GameWorld(
 +       engine=engine,
         max_rooms=max_rooms,
         room_min_size=room_min_size,
@@ -361,19 +365,21 @@ import input_handlers
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>import tcod
-import color
-from engine import Engine
-import entity_factories
-<span class="new-text">from game_map import GameWorld</span>
-import input_handlers
-<span class="crossed-out-text">from procgen import generate_dungeon</span>
+import game.color
+<span class="crossed-out-text">from game.engine import Engine</span>
+<span class="new-text">import game.engine</span>
+import game.entity_factories
+<span class="new-text">import game.game_map</span>
+import game.input_handlers
+<span class="new-text">import game.procgen</span>
 ...
 
     ...
-    engine = Engine(player=player)
+    <span class="crossed-out-text">engine = Engine(player=player)</span>
+    <span class="new-text">engine = game.engine.Engine(player=player)</span>
 
     <span class="crossed-out-text">engine.game_map = generate_dungeon(</span>
-    <span class="new-text">engine.game_world = GameWorld(
+    <span class="new-text">engine.game_world = game.game_map.GameWorld(
         engine=engine,</span>
         max_rooms=max_rooms,
         room_min_size=room_min_size,
@@ -409,11 +415,9 @@ class WaitAction(Action):
 +       """
 +       if (self.entity.x, self.entity.y) == self.engine.game_map.downstairs_location:
 +           self.engine.game_world.generate_floor()
-+           self.engine.message_log.add_message(
-+               "You descend the staircase.", color.descend
-+           )
++           self.engine.message_log.add_message("You descend the staircase.", game.color.descend)
 +       else:
-+           raise exceptions.Impossible("There are no stairs here.")
++           raise game.exceptions.Impossible("There are no stairs here.")
 
 
 class ActionWithDirection(Action):
@@ -433,11 +437,9 @@ class ActionWithDirection(Action):
         """
         if (self.entity.x, self.entity.y) == self.engine.game_map.downstairs_location:
             self.engine.game_world.generate_floor()
-            self.engine.message_log.add_message(
-                "You descend the staircase.", color.descend
-            )
+            self.engine.message_log.add_message("You descend the staircase.", game.color.descend)
         else:
-            raise exceptions.Impossible("There are no stairs here.")</span>
+            raise game.exceptions.Impossible("There are no stairs here.")</span>
 
 
 class ActionWithDirection(Action):
@@ -453,39 +455,77 @@ To call this action, the player should be able to press the `>` key. This can be
 {{< highlight diff >}}
 class MainGameEventHandler(EventHandler):
     def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
-        action: Optional[Action] = None
+-       action: Optional[Action] = None
++       action: Optional[game.actions.Action] = None
 
         key = event.sym
-+       modifier = event.mod
++       modifiers = event.mod
 
         player = self.engine.player
 
-+       if key == tcod.event.K_PERIOD and modifier & (
-+           tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT
-+       ):
-+           return actions.TakeStairsAction(player)
-
         if key in MOVE_KEYS:
             dx, dy = MOVE_KEYS[key]
+-           action = BumpAction(player, dx, dy)
+-       elif key == tcod.event.K_ESCAPE:
+-           action = EscapeAction(player)
++           action = game.actions.BumpAction(player, dx, dy)
++       elif key == tcod.event.KeySym.ESCAPE:
++           action = game.actions.EscapeAction(player)
++       elif key == tcod.event.KeySym.V:
++           return HistoryViewer(self.engine)
++       elif key == tcod.event.KeySym.G:
++           action = game.actions.PickupAction(player)
++       elif key == tcod.event.KeySym.I:
++           return InventoryActivateHandler(self.engine)
++       elif key == tcod.event.KeySym.D:
++           return InventoryDropHandler(self.engine)
++       elif key == tcod.event.KeySym.SLASH:
++           return LookHandler(self.engine)
++       elif key == tcod.event.KeySym.PERIOD:
++           if modifiers & (tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT):
++               # Take stairs down if user presses '>'
++               return game.actions.TakeStairsAction(player)
++           else:
++               # Wait if user presses '.'
++               action = game.actions.WaitAction(player)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>class MainGameEventHandler(EventHandler):
     def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
-        action: Optional[Action] = None
+        <span class="crossed-out-text">action: Optional[Action] = None</span>
+        <span class="new-text">action: Optional[game.actions.Action] = None</span>
 
         key = event.sym
-        <span class="new-text">modifier = event.mod</span>
+        <span class="new-text">modifiers = event.mod</span>
 
         player = self.engine.player
 
-        <span class="new-text">if key == tcod.event.K_PERIOD and modifier & (
-            tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT
-        ):
-            return actions.TakeStairsAction(player)</span>
-
         if key in MOVE_KEYS:
-            dx, dy = MOVE_KEYS[key]</pre>
+            dx, dy = MOVE_KEYS[key]
+            <span class="crossed-out-text">action = BumpAction(player, dx, dy)</span>
+            <span class="new-text">action = game.actions.BumpAction(player, dx, dy)</span>
+        <span class="crossed-out-text">elif key == tcod.event.K_ESCAPE:</span>
+            <span class="crossed-out-text">action = EscapeAction(player)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.ESCAPE:</span>
+            <span class="new-text">action = game.actions.EscapeAction(player)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.V:</span>
+            <span class="new-text">return HistoryViewer(self.engine)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.G:</span>
+            <span class="new-text">action = game.actions.PickupAction(player)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.I:</span>
+            <span class="new-text">return InventoryActivateHandler(self.engine)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.D:</span>
+            <span class="new-text">return InventoryDropHandler(self.engine)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.SLASH:</span>
+            <span class="new-text">return LookHandler(self.engine)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.PERIOD:</span>
+            <span class="new-text">if modifiers & (tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT):</span>
+                <span class="new-text"># Take stairs down if user presses '>'</span>
+                <span class="new-text">return game.actions.TakeStairsAction(player)</span>
+            <span class="new-text">else:</span>
+                <span class="new-text"># Wait if user presses '.'</span>
+                <span class="new-text">action = game.actions.WaitAction(player)</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -506,20 +546,20 @@ Add this function to `render_functions.py`:
 from __future__ import annotations
 
 -from typing import TYPE_CHECKING
-+from typing import Tuple, TYPE_CHECKING
++from typing import TYPE_CHECKING, Tuple
 
-import color
+import tcod
 ...
 
 ...
 def render_bar(
-    console: Console, current_value: int, maximum_value: int, total_width: int
+    console: tcod.console.Console, current_value: int, maximum_value: int, total_width: int
 ) -> None:
     ...
 
 
 +def render_dungeon_level(
-+   console: Console, dungeon_level: int, location: Tuple[int, int]
++   console: tcod.console.Console, dungeon_level: int, location: Tuple[int, int]
 +) -> None:
 +   """
 +   Render the level the player is currently on, at the given location.
@@ -530,7 +570,7 @@ def render_bar(
 
 
 def render_names_at_mouse_location(
-    console: Console, x: int, y: int, engine: Engine
+    console: tcod.console.Console, x: int, y: int, engine: game.engine.Engine
 ) -> None:
     ...
 {{</ highlight >}}
@@ -539,20 +579,20 @@ def render_names_at_mouse_location(
 <pre>from __future__ import annotations
 
 <span class="crossed-out-text">from typing import TYPE_CHECKING</span>
-<span class="new-text">from typing import Tuple, TYPE_CHECKING</span>
+<span class="new-text">from typing import TYPE_CHECKING, Tuple</span>
 
-import color
+import tcod
 ...
 
 ...
 def render_bar(
-    console: Console, current_value: int, maximum_value: int, total_width: int
+    console: tcod.console.Console, current_value: int, maximum_value: int, total_width: int
 ) -> None:
     ...
 
 
 <span class="new-text">def render_dungeon_level(
-    console: Console, dungeon_level: int, location: Tuple[int, int]
+    console: tcod.console.Console, dungeon_level: int, location: Tuple[int, int]
 ) -> None:
     """
     Render the level the player is currently on, at the given location.
@@ -563,7 +603,7 @@ def render_bar(
 
 
 def render_names_at_mouse_location(
-    console: Console, x: int, y: int, engine: Engine
+    console: tcod.console.Console, x: int, y: int, engine: game.engine.Engine
 ) -> None:
     ...</pre>
 {{</ original-tab >}}
@@ -577,13 +617,14 @@ To call this function, we can edit the `Engine`'s `render` function, like so:
 {{< diff-tab >}}
 {{< highlight diff >}}
 ...
-import exceptions
-from message_log import MessageLog
--from render_functions import (
+import game.exceptions
+-from game.message_log import MessageLog
+-from game.render_functions import (
 -   render_bar,
 -   render_names_at_mouse_location,
 -)
-+import render_functions
++import game.message_log
++import game.render_functions
 
 if TYPE_CHECKING:
     ...
@@ -592,13 +633,13 @@ if TYPE_CHECKING:
 class Engine:
     ...
 
-    def render(self, console: Console) -> None:
+    def render(self, console: tcod.console.Console) -> None:
         self.game_map.render(console)
 
         self.message_log.render(console=console, x=21, y=45, width=40, height=5)
 
 -       render_bar(
-+       render_functions.render_bar(
++       game.render_functions.render_bar(
             console=console,
             current_value=self.player.fighter.hp,
             maximum_value=self.player.fighter.max_hp,
@@ -606,13 +647,19 @@ class Engine:
         )
 
 -       render_names_at_mouse_location(console=console, x=21, y=44, engine=self)
-+       render_functions.render_dungeon_level(
++       game.render_functions.render_dungeon_level(
 +           console=console,
 +           dungeon_level=self.game_world.current_floor,
 +           location=(0, 47),
 +       )
 
-+       render_functions.render_names_at_mouse_location(
++       console.print(
++           x=0,
++           y=46,
++           string=f"LVL: {self.player.level.current_level}",
++       )
+
++       game.render_functions.render_names_at_mouse_location(
 +           console=console, x=21, y=44, engine=self
 +       )
 
@@ -622,13 +669,14 @@ class Engine:
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>...
-import exceptions
-from message_log import MessageLog
-<span class="crossed-out-text">from render_functions import (</span>
+import game.exceptions
+<span class="crossed-out-text">from game.message_log import MessageLog</span>
+<span class="crossed-out-text">from game.render_functions import (</span>
     <span class="crossed-out-text">render_bar,</span>
     <span class="crossed-out-text">render_names_at_mouse_location,</span>
 <span class="crossed-out-text">)</span>
-<span class="new-text">import render_functions</span>
+<span class="new-text">import game.message_log</span>
+<span class="new-text">import game.render_functions</span>
 
 if TYPE_CHECKING:
     ...
@@ -637,13 +685,13 @@ if TYPE_CHECKING:
 class Engine:
     ...
 
-    def render(self, console: Console) -> None:
+    def render(self, console: tcod.console.Console) -> None:
         self.game_map.render(console)
 
         self.message_log.render(console=console, x=21, y=45, width=40, height=5)
 
         <span class="crossed-out-text">render_bar(</span>
-        <span class="new-text">render_functions.render_bar(</span>
+        <span class="new-text">game.render_functions.render_bar(</span>
             console=console,
             current_value=self.player.fighter.hp,
             maximum_value=self.player.fighter.max_hp,
@@ -651,13 +699,19 @@ class Engine:
         )
 
         <span class="crossed-out-text">render_names_at_mouse_location(console=console, x=21, y=44, engine=self)</span>
-        <span class="new-text">render_functions.render_dungeon_level(
+        <span class="new-text">game.render_functions.render_dungeon_level(
             console=console,
             dungeon_level=self.game_world.current_floor,
             location=(0, 47),
         )
 
-        render_functions.render_names_at_mouse_location(
+        console.print(
+            x=0,
+            y=46,
+            string=f"LVL: {self.player.level.current_level}",
+        )
+
+        game.render_functions.render_names_at_mouse_location(
             console=console, x=21, y=44, engine=self
         )</span>
 
@@ -687,16 +741,12 @@ We can accomplish both of these goals by adding one component: `Level`. The `Lev
 ```py3
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from components.base_component import BaseComponent
-
-if TYPE_CHECKING:
-    from entity import Actor
+from game.components.base_component import BaseComponent
+import game.entity
 
 
 class Level(BaseComponent):
-    parent: Actor
+    parent: game.entity.Actor
 
     def __init__(
         self,
@@ -842,12 +892,12 @@ To use this component, we need to add it to our `Actor` class. Make the followin
 {{< diff-tab >}}
 {{< highlight diff >}}
 if TYPE_CHECKING:
-    from components.ai import BaseAI
-    from components.consumable import Consumable
-    from components.fighter import Fighter
-    from components.inventory import Inventory
-+   from components.level import Level
-    from game_map import GameMap
+    import game.components.ai
+    import game.components.consumable
+    import game.components.fighter
+    import game.components.inventory
++   import game.components.level
+    import game.game_map
 
 T = TypeVar("T", bound="Entity")
 ...
@@ -861,22 +911,32 @@ class Actor(Entity):
         char: str = "?",
         color: Tuple[int, int, int] = (255, 255, 255),
         name: str = "<Unnamed>",
-        ai_cls: Type[BaseAI],
-        fighter: Fighter,
-        inventory: Inventory,
-+       level: Level,
+-       ai_cls: Type[BaseAI],
+-       fighter: Fighter,
+-       inventory: Inventory,
++       ai_cls: Type[game.components.ai.BaseAI],
++       fighter: game.components.fighter.Fighter,
++       inventory: game.components.inventory.Inventory,
++       level: game.components.level.Level,
     ):
         super().__init__(
-            x=x,
-            y=y,
-            char=char,
-            color=color,
-            name=name,
-            blocks_movement=True,
-            render_order=RenderOrder.ACTOR,
+-           x=x,
+-           y=y,
+-           char=char,
+-           color=color,
+-           name=name,
+-           blocks_movement=True,
+-           render_order=RenderOrder.ACTOR,
++           parent=None,
++           x=x,
++           y=y,
++           char=char,
++           color=color,
++           name=name,
         )
 
-        self.ai: Optional[BaseAI] = ai_cls(self)
+-       self.ai: Optional[BaseAI] = ai_cls(self)
++       self.ai: Optional[game.components.ai.BaseAI] = ai_cls(self)
 
         self.fighter = fighter
         self.fighter.parent = self
@@ -887,6 +947,8 @@ class Actor(Entity):
 +       self.level = level
 +       self.level.parent = self
 
++       self.render_order = RenderOrder.ACTOR
+
     @property
     def is_alive(self) -> bool:
         ...
@@ -894,12 +956,12 @@ class Actor(Entity):
 {{</ diff-tab >}}
 {{< original-tab >}}
 <pre>if TYPE_CHECKING:
-    from components.ai import BaseAI
-    from components.consumable import Consumable
-    from components.fighter import Fighter
-    from components.inventory import Inventory
-    <span class="new-text">from components.level import Level</span>
-    from game_map import GameMap
+    import game.components.ai
+    import game.components.consumable
+    import game.components.fighter
+    import game.components.inventory
+    <span class="new-text">import game.components.level</span>
+    import game.game_map
 
 T = TypeVar("T", bound="Entity")
 ...
@@ -913,22 +975,32 @@ class Actor(Entity):
         char: str = "?",
         color: Tuple[int, int, int] = (255, 255, 255),
         name: str = "&lt;Unnamed&gt;",
-        ai_cls: Type[BaseAI],
-        fighter: Fighter,
-        inventory: Inventory,
-        <span class="new-text">level: Level,</span>
+        <span class="crossed-out-text">ai_cls: Type[BaseAI],</span>
+        <span class="crossed-out-text">fighter: Fighter,</span>
+        <span class="crossed-out-text">inventory: Inventory,</span>
+        <span class="new-text">ai_cls: Type[game.components.ai.BaseAI],</span>
+        <span class="new-text">fighter: game.components.fighter.Fighter,</span>
+        <span class="new-text">inventory: game.components.inventory.Inventory,</span>
+        <span class="new-text">level: game.components.level.Level,</span>
     ):
         super().__init__(
-            x=x,
-            y=y,
-            char=char,
-            color=color,
-            name=name,
-            blocks_movement=True,
-            render_order=RenderOrder.ACTOR,
+            <span class="crossed-out-text">x=x,</span>
+            <span class="crossed-out-text">y=y,</span>
+            <span class="crossed-out-text">char=char,</span>
+            <span class="crossed-out-text">color=color,</span>
+            <span class="crossed-out-text">name=name,</span>
+            <span class="crossed-out-text">blocks_movement=True,</span>
+            <span class="crossed-out-text">render_order=RenderOrder.ACTOR,</span>
+            <span class="new-text">parent=None,</span>
+            <span class="new-text">x=x,</span>
+            <span class="new-text">y=y,</span>
+            <span class="new-text">char=char,</span>
+            <span class="new-text">color=color,</span>
+            <span class="new-text">name=name,</span>
         )
 
-        self.ai: Optional[BaseAI] = ai_cls(self)
+        <span class="crossed-out-text">self.ai: Optional[BaseAI] = ai_cls(self)</span>
+        <span class="new-text">self.ai: Optional[game.components.ai.BaseAI] = ai_cls(self)</span>
 
         self.fighter = fighter
         self.fighter.parent = self
@@ -937,7 +1009,9 @@ class Actor(Entity):
         self.inventory.parent = self
 
         <span class="new-text">self.level = level
-        self.level.parent = self</span>
+        self.level.parent = self
+
+        self.render_order = RenderOrder.ACTOR</span>
 
     @property
     def is_alive(self) -> bool:
@@ -950,12 +1024,17 @@ Let's also modify our entities in `entity_factories.py` now:
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-from components.ai import HostileEnemy
-from components import consumable
-from components.fighter import Fighter
-from components.inventory import Inventory
-+from components.level import Level
-from entity import Actor, Item
+-from components.ai import HostileEnemy
+-from components import consumable
+-from components.fighter import Fighter
+-from components.inventory import Inventory
+-from entity import Actor, Item
++from game.components.ai import HostileEnemy
++from game.components import consumable
++from game.components.fighter import Fighter
++from game.components.inventory import Inventory
++from game.components.level import Level
++from game.entity import Actor, Item
 
 
 player = Actor(
@@ -990,12 +1069,17 @@ troll = Actor(
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>from components.ai import HostileEnemy
-from components import consumable
-from components.fighter import Fighter
-from components.inventory import Inventory
-<span class="new-text">from components.level import Level</span>
-from entity import Actor, Item
+<pre><span class="crossed-out-text">from components.ai import HostileEnemy</span>
+<span class="crossed-out-text">from components import consumable</span>
+<span class="crossed-out-text">from components.fighter import Fighter</span>
+<span class="crossed-out-text">from components.inventory import Inventory</span>
+<span class="crossed-out-text">from entity import Actor, Item</span>
+<span class="new-text">from game.components.ai import HostileEnemy</span>
+<span class="new-text">from game.components import consumable</span>
+<span class="new-text">from game.components.fighter import Fighter</span>
+<span class="new-text">from game.components.inventory import Inventory</span>
+<span class="new-text">from game.components.level import Level</span>
+<span class="new-text">from game.entity import Actor, Item</span>
 
 
 player = Actor(
@@ -1037,7 +1121,10 @@ When an enemy dies, we need to give the player XP. This is as simple as adding o
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-class Fighter(BaseComponent):
+-class Fighter(BaseComponent):
++class Fighter(game.components.base_component.BaseComponent):
++   parent: game.entity.Actor
++
     def die(self) -> None:
         ...
 
@@ -1050,8 +1137,11 @@ class Fighter(BaseComponent):
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>class Fighter(BaseComponent):
-    def die(self) -> None:
+<pre><span class="crossed-out-text">class Fighter(BaseComponent):</span>
+<span class="new-text">class Fighter(game.components.base_component.BaseComponent):</span>
+    <span class="new-text">parent: game.entity.Actor
+
+</span>    def die(self) -> None:
         ...
 
         self.engine.message_log.add_message(death_message, death_message_color)
@@ -1078,7 +1168,7 @@ class AskUserEventHandler(EventHandler):
 +class LevelUpEventHandler(AskUserEventHandler):
 +   TITLE = "Level Up"
 
-+   def on_render(self, console: tcod.Console) -> None:
++   def on_render(self, console: tcod.console.Console) -> None:
 +       super().on_render(console)
 
 +       if self.engine.player.x <= 30:
@@ -1119,7 +1209,7 @@ class AskUserEventHandler(EventHandler):
 +   def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
 +       player = self.engine.player
 +       key = event.sym
-+       index = key - tcod.event.K_a
++       index = key - tcod.event.KeySym.A
 
 +       if 0 <= index <= 2:
 +           if index == 0:
@@ -1129,7 +1219,7 @@ class AskUserEventHandler(EventHandler):
 +           else:
 +               player.level.increase_defense()
 +       else:
-+           self.engine.message_log.add_message("Invalid entry.", color.invalid)
++           self.engine.message_log.add_message("Invalid entry.", game.color.invalid)
 
 +           return None
 
@@ -1155,7 +1245,7 @@ class InventoryEventHandler(AskUserEventHandler):
 <span class="new-text">class LevelUpEventHandler(AskUserEventHandler):
     TITLE = "Level Up"
 
-    def on_render(self, console: tcod.Console) -> None:
+    def on_render(self, console: tcod.console.Console) -> None:
         super().on_render(console)
 
         if self.engine.player.x <= 30:
@@ -1196,7 +1286,7 @@ class InventoryEventHandler(AskUserEventHandler):
     def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
         player = self.engine.player
         key = event.sym
-        index = key - tcod.event.K_a
+        index = key - tcod.event.KeySym.A
 
         if 0 <= index <= 2:
             if index == 0:
@@ -1206,7 +1296,7 @@ class InventoryEventHandler(AskUserEventHandler):
             else:
                 player.level.increase_defense()
         else:
-            self.engine.message_log.add_message("Invalid entry.", color.invalid)
+            self.engine.message_log.add_message("Invalid entry.", game.color.invalid)
 
             return None
 
@@ -1233,21 +1323,33 @@ Using `LevelUpEventHandler` is actually quite simple: We can check when the play
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
+        if self.handle_action(action_or_state):
+            # A valid action was performed.
+            # Type check to ensure player is an Actor before accessing is_alive
+-           assert isinstance(self.engine.player, Actor), "Player must be an Actor"
++           assert isinstance(self.engine.player, game.entity.Actor), "Player must be an Actor"
             if not self.engine.player.is_alive:
                 # The player was killed sometime during or after the action.
                 return GameOverEventHandler(self.engine)
 +           elif self.engine.player.level.requires_level_up:
 +               return LevelUpEventHandler(self.engine)
             return MainGameEventHandler(self.engine)  # Return to the main handler.
+        return self
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>            if not self.engine.player.is_alive:
+<pre>        if self.handle_action(action_or_state):
+            # A valid action was performed.
+            # Type check to ensure player is an Actor before accessing is_alive
+            <span class="crossed-out-text">assert isinstance(self.engine.player, Actor), "Player must be an Actor"</span>
+            <span class="new-text">assert isinstance(self.engine.player, game.entity.Actor), "Player must be an Actor"</span>
+            if not self.engine.player.is_alive:
                 # The player was killed sometime during or after the action.
                 return GameOverEventHandler(self.engine)
             <span class="new-text">elif self.engine.player.level.requires_level_up:
                 return LevelUpEventHandler(self.engine)</span>
-            return MainGameEventHandler(self.engine)  # Return to the main handler.</pre>
+            return MainGameEventHandler(self.engine)  # Return to the main handler.
+        return self</pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -1266,7 +1368,7 @@ class AskUserEventHandler(EventHandler):
 +class CharacterScreenEventHandler(AskUserEventHandler):
 +   TITLE = "Character Information"
 
-+   def on_render(self, console: tcod.Console) -> None:
++   def on_render(self, console: tcod.console.Console) -> None:
 +       super().on_render(console)
 
 +       if self.engine.player.x <= 30:
@@ -1319,7 +1421,7 @@ class LevelUpEventHandler(AskUserEventHandler):
 <span class="new-text">class CharacterScreenEventHandler(AskUserEventHandler):
     TITLE = "Character Information"
 
-    def on_render(self, console: tcod.Console) -> None:
+    def on_render(self, console: tcod.console.Console) -> None:
         super().on_render(console)
 
         if self.engine.player.x <= 30:
@@ -1373,21 +1475,29 @@ To open the screen, we'll have the player press the `c` key. Add the following t
 {{< codetab >}}
 {{< diff-tab >}}
 {{< highlight diff >}}
-        elif key == tcod.event.K_d:
-            return InventoryDropHandler(self.engine)
-+       elif key == tcod.event.K_c:
+-       elif key == tcod.event.K_d:
+-           return InventoryDropHandler(self.engine)
++       elif key == tcod.event.KeySym.D:
++           return InventoryDropHandler(self.engine)
++       elif key == tcod.event.KeySym.C:
 +           return CharacterScreenEventHandler(self.engine)
-        elif key == tcod.event.K_SLASH:
-            return LookHandler(self.engine)
+-       elif key == tcod.event.K_SLASH:
+-           return LookHandler(self.engine)
++       elif key == tcod.event.KeySym.SLASH:
++           return LookHandler(self.engine)
 {{</ highlight >}}
 {{</ diff-tab >}}
 {{< original-tab >}}
-<pre>        elif key == tcod.event.K_d:
-            return InventoryDropHandler(self.engine)
-        <span class="new-text">elif key == tcod.event.K_c:
-            return CharacterScreenEventHandler(self.engine)</span>
-        elif key == tcod.event.K_SLASH:
-            return LookHandler(self.engine)</pre>
+<pre>        <span class="crossed-out-text">elif key == tcod.event.K_d:</span>
+            <span class="crossed-out-text">return InventoryDropHandler(self.engine)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.D:</span>
+            <span class="new-text">return InventoryDropHandler(self.engine)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.C:</span>
+            <span class="new-text">return CharacterScreenEventHandler(self.engine)</span>
+        <span class="crossed-out-text">elif key == tcod.event.K_SLASH:</span>
+            <span class="crossed-out-text">return LookHandler(self.engine)</span>
+        <span class="new-text">elif key == tcod.event.KeySym.SLASH:</span>
+            <span class="new-text">return LookHandler(self.engine)</span></pre>
 {{</ original-tab >}}
 {{</ codetab >}}
 
@@ -1395,6 +1505,6 @@ To open the screen, we'll have the player press the `c` key. Add the following t
 
 That's it for this chapter. We've added the ability to go down floors, and to level up. While the player can now "progress", the environment itself doesn't. The items that spawn on each floor are always the same, and the enemies don't get tougher as we go down floors. The next part will address that.
 
-If you want to see the code so far in its entirety, [click here](https://github.com/TStand90/tcod_tutorial_v2/tree/2020/part-11).
+If you want to see the code so far in its entirety, [click here](https://github.com/jmccardle/tcod_tutorial_v2/tree/part-11).
 
-[Click here to move on to the next part of this tutorial.](/tutorials/tcod/v2/part-12)
+[Click here to move on to the next part of this tutorial.](/tutorials/tcod/part-12)

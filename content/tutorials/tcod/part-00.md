@@ -222,4 +222,4 @@ Be sure to check out the [Roguelike Development Subreddit](https://www.reddit.co
 
 ### Ready to go?
 
-Once you're set up and ready to go, you can proceed to [Part 1](/tutorials/tcod/v2/part-01).
+Once you're set up and ready to go, you can proceed to [Part 1](/tutorials/tcod/part-01).
