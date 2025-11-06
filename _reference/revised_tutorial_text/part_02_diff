@@ -1,0 +1,334 @@
+diff --git a/game/actions.py b/game/actions.py
+index 2b3495d..5b5faa1 100644
+--- a/game/actions.py
++++ b/game/actions.py
+@@ -1,50 +1,60 @@
+ from __future__ import annotations
+ 
+-from game.engine import Engine
+-from game.entity import Entity
++from typing import TYPE_CHECKING
++
++if TYPE_CHECKING:
++    import game.engine
++    import game.entity
+ 
+ 
+ class Action:
+-    def __init__(self, entity: Entity) -> None:
++    def __init__(self, entity: game.entity.Entity) -> None:
+         super().__init__()
+         self.entity = entity
+ 
+     @property
+-    def engine(self) -> Engine:
++    def engine(self) -> game.engine.Engine:
+         """Return the engine this action belongs to."""
+-        # In Part 1, we don't have gamemap yet, so we'll need a different approach
+-        # This will be refactored in Part 2 when we add GameMap
+-        raise NotImplementedError()
++        return self.entity.gamemap.engine
+ 
+-    def perform(self, engine: Engine) -> None:
++    def perform(self) -> None:
+         """Perform this action with the objects needed to determine its scope.
+ 
++        `self.engine` is the scope this action is being performed in.
++
++        `self.entity` is the object performing the action.
++
+         This method must be overridden by Action subclasses.
+         """
+         raise NotImplementedError()
+ 
+ 
+ class EscapeAction(Action):
+-    def perform(self, engine: Engine) -> None:
++    def perform(self) -> None:
+         raise SystemExit()
+ 
+ 
+ class ActionWithDirection(Action):
+-    def __init__(self, entity: Entity, dx: int, dy: int):
++    def __init__(self, entity: game.entity.Entity, dx: int, dy: int):
+         super().__init__(entity)
+ 
+         self.dx = dx
+         self.dy = dy
+ 
+-    def perform(self, engine: Engine) -> None:
++    def perform(self) -> None:
+         raise NotImplementedError()
+ 
+ 
+ class MovementAction(ActionWithDirection):
+-    def perform(self, engine: Engine) -> None:
++    def perform(self) -> None:
+         dest_x = self.entity.x + self.dx
+         dest_y = self.entity.y + self.dy
+ 
+-        # Check boundaries (hardcoded for Part 1, will be improved later)
+-        if 0 <= dest_x < 80 and 0 <= dest_y < 50:
+-            self.entity.move(self.dx, self.dy)
++        if not self.engine.game_map.in_bounds(dest_x, dest_y):
++            return  # Destination is out of bounds.
++        if not self.engine.game_map.tiles["walkable"][dest_x, dest_y]:
++            return  # Destination is blocked by a tile.
++        if self.engine.game_map.get_blocking_entity_at_location(dest_x, dest_y):
++            return  # Destination is blocked by an entity.
++
++        self.entity.move(self.dx, self.dy)
+diff --git a/game/engine.py b/game/engine.py
+index 93d0c4e..88f9854 100644
+--- a/game/engine.py
++++ b/game/engine.py
+@@ -1,13 +1,20 @@
+ from __future__ import annotations
+ 
++from typing import TYPE_CHECKING
++
+ import tcod
+ 
+ from game.entity import Entity
+ 
++if TYPE_CHECKING:
++    import game.game_map
++
+ 
+ class Engine:
++    game_map: game.game_map.GameMap
++
+     def __init__(self, player: Entity):
+         self.player = player
+ 
+     def render(self, console: tcod.console.Console) -> None:
+-        console.print(x=self.player.x, y=self.player.y, string=self.player.char, fg=self.player.color)
++        self.game_map.render(console)
+diff --git a/game/entity.py b/game/entity.py
+index c9d278c..26d2919 100644
+--- a/game/entity.py
++++ b/game/entity.py
+@@ -1,4 +1,9 @@
+-from typing import Tuple
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, Optional, Tuple
++
++if TYPE_CHECKING:
++    import game.game_map
+ 
+ 
+ class Entity:
+@@ -6,11 +11,35 @@ class Entity:
+     A generic object to represent players, enemies, items, etc.
+     """
+ 
+-    def __init__(self, x: int, y: int, char: str, color: Tuple[int, int, int]):
++    # Part 8 refactoring prep: Will become Union[GameMap, Inventory] in Part 8
++    gamemap: game.game_map.GameMap
++
++    def __init__(
++        self,
++        gamemap: Optional[game.game_map.GameMap] = None,
++        x: int = 0,
++        y: int = 0,
++        char: str = "?",
++        color: Tuple[int, int, int] = (255, 255, 255),
++    ):
+         self.x = x
+         self.y = y
+         self.char = char
+         self.color = color
++        if gamemap:
++            # If gamemap isn't provided now then it will be set later.
++            self.gamemap = gamemap
++            gamemap.entities.add(self)
++
++    def place(self, x: int, y: int, gamemap: Optional[game.game_map.GameMap] = None) -> None:
++        """Place this entity at a new location. Handles moving across GameMaps."""
++        self.x = x
++        self.y = y
++        if gamemap:
++            if hasattr(self, "gamemap"):  # Possibly uninitialized.
++                self.gamemap.entities.remove(self)
++            self.gamemap = gamemap
++            gamemap.entities.add(self)
+ 
+     def move(self, dx: int, dy: int) -> None:
+         # Move the entity by a given amount
+diff --git a/game/game_map.py b/game/game_map.py
+new file mode 100644
+index 0000000..8dfd233
+--- /dev/null
++++ b/game/game_map.py
+@@ -0,0 +1,50 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, Optional, Set
++
++import numpy as np
++import tcod
++
++from game.tiles import floor, wall
++
++if TYPE_CHECKING:
++    import game.engine
++    import game.entity
++
++
++class GameMap:
++    def __init__(self, engine: game.engine.Engine, width: int, height: int):
++        self.engine = engine
++        self.width, self.height = width, height
++        self.entities: Set[game.entity.Entity] = set()
++        self.tiles = np.full((width, height), fill_value=floor, order="F")
++
++        # Create a simple test wall
++        self.tiles[30:33, 22] = wall
++
++    def get_blocking_entity_at_location(
++        self,
++        location_x: int,
++        location_y: int,
++    ) -> Optional[game.entity.Entity]:
++        for entity in self.entities:
++            if entity.x == location_x and entity.y == location_y:
++                return entity
++
++        return None
++
++    def in_bounds(self, x: int, y: int) -> bool:
++        """Return True if x and y are inside of the bounds of this map."""
++        return 0 <= x < self.width and 0 <= y < self.height
++
++    def render(self, console: tcod.console.Console) -> None:
++        """
++        Renders the map.
++
++        For now, we'll render all tiles as visible.
++        In Part 4 we'll add FOV.
++        """
++        console.rgb[0 : self.width, 0 : self.height] = self.tiles["light"]
++
++        for entity in self.entities:
++            console.print(x=entity.x, y=entity.y, string=entity.char, fg=entity.color)
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index 01553b0..cd93494 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -89,7 +89,7 @@ def handle_action(self, action: Optional[Action]) -> bool:
+         if action is None:
+             return False
+ 
+-        action.perform(self.engine)
++        action.perform()
+         return True
+ 
+     def on_render(self, console: tcod.console.Console) -> None:
+diff --git a/game/tiles.py b/game/tiles.py
+new file mode 100644
+index 0000000..e823828
+--- /dev/null
++++ b/game/tiles.py
+@@ -0,0 +1,51 @@
++from typing import Tuple
++
++from numpy.typing import NDArray
++import numpy as np
++
++# Tile graphics structured type compatible with Console.tiles_rgb.
++graphic_dt = np.dtype(
++    [
++        ("ch", np.int32),  # Unicode codepoint.
++        ("fg", "3B"),  # 3 unsigned bytes, for RGB colors.
++        ("bg", "3B"),
++    ]
++)
++
++# Tile struct used for statically defined tile data.
++tile_dt = np.dtype(
++    [
++        ("walkable", bool),  # True if this tile can be walked over.
++        ("transparent", bool),  # True if this tile doesn't block FOV.
++        ("dark", graphic_dt),  # Graphics for when this tile is not in FOV.
++        ("light", graphic_dt),  # Graphics for when the tile is in FOV.
++    ]
++)
++
++
++def new_tile(
++    *,  # Enforce the use of keywords, so that parameter order doesn't matter.
++    walkable: int,
++    transparent: int,
++    dark: Tuple[int, Tuple[int, int, int], Tuple[int, int, int]],
++    light: Tuple[int, Tuple[int, int, int], Tuple[int, int, int]],
++) -> NDArray[np.void]:
++    """Helper function for defining individual tile types"""
++    return np.array((walkable, transparent, dark, light), dtype=tile_dt)
++
++
++# SHROUD represents unexplored, unseen tiles
++SHROUD = np.array((ord(" "), (255, 255, 255), (0, 0, 0)), dtype=graphic_dt)
++
++floor = new_tile(
++    walkable=True,
++    transparent=True,
++    dark=(ord(" "), (255, 255, 255), (50, 50, 150)),
++    light=(ord(" "), (255, 255, 255), (200, 180, 50)),
++)
++wall = new_tile(
++    walkable=False,
++    transparent=False,
++    dark=(ord(" "), (255, 255, 255), (0, 0, 100)),
++    light=(ord(" "), (255, 255, 255), (130, 110, 50)),
++)
+diff --git a/main.py b/main.py
+index 6b7173e..ecd522f 100755
+--- a/main.py
++++ b/main.py
+@@ -3,6 +3,7 @@
+ 
+ from game.engine import Engine
+ from game.entity import Entity
++from game.game_map import GameMap
+ from game.input_handlers import BaseEventHandler, MainGameEventHandler
+ 
+ 
+@@ -10,11 +11,25 @@ def main() -> None:
+     screen_width = 80
+     screen_height = 50
+ 
++    map_width = 80
++    map_height = 45
++
+     tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
+ 
+-    player = Entity(x=int(screen_width / 2), y=int(screen_height / 2), char="@", color=(255, 255, 255))
++    engine = Engine(player=Entity())
++
++    engine.game_map = GameMap(engine, map_width, map_height)
++
++    # Create player and place in map
++    engine.player.place(int(screen_width / 2), int(screen_height / 2), engine.game_map)
++    engine.player.char = "@"
++    engine.player.color = (255, 255, 255)
+ 
+-    engine = Engine(player=player)
++    # Create an NPC
++    npc = Entity()
++    npc.place(int(screen_width / 2 - 5), int(screen_height / 2), engine.game_map)
++    npc.char = "@"
++    npc.color = (255, 255, 0)
+ 
+     # Part 10 refactoring: Track handler in main loop
+     handler: BaseEventHandler = MainGameEventHandler(engine)
+@@ -32,8 +47,8 @@ def main() -> None:
+             handler.on_render(console=root_console)
+             context.present(root_console)
+ 
++            # Part 10 refactoring: Handler manages its own state transitions
+             for event in tcod.event.wait():
+-                event = context.convert_event(event)
+                 handler = handler.handle_events(event)
+ 
+ 

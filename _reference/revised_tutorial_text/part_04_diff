@@ -1,0 +1,90 @@
+diff --git a/game/engine.py b/game/engine.py
+index 88f9854..77718cb 100644
+--- a/game/engine.py
++++ b/game/engine.py
+@@ -16,5 +16,15 @@ class Engine:
+     def __init__(self, player: Entity):
+         self.player = player
+ 
++    def update_fov(self) -> None:
++        """Recompute the visible area based on the players point of view."""
++        self.game_map.visible[:] = tcod.map.compute_fov(
++            self.game_map.tiles["transparent"],
++            (self.player.x, self.player.y),
++            radius=8,
++        )
++        # If a tile is "visible" it should be added to "explored".
++        self.game_map.explored |= self.game_map.visible
++
+     def render(self, console: tcod.console.Console) -> None:
+         self.game_map.render(console)
+diff --git a/game/game_map.py b/game/game_map.py
+index 1679cb0..a698703 100644
+--- a/game/game_map.py
++++ b/game/game_map.py
+@@ -5,7 +5,7 @@
+ import numpy as np
+ import tcod
+ 
+-from game.tiles import wall
++from game.tiles import SHROUD, wall
+ 
+ if TYPE_CHECKING:
+     import game.engine
+@@ -19,6 +19,9 @@ def __init__(self, engine: game.engine.Engine, width: int, height: int):
+         self.entities: Set[game.entity.Entity] = set()
+         self.tiles = np.full((width, height), fill_value=wall, order="F")
+ 
++        self.visible = np.full((width, height), fill_value=False, order="F")  # Tiles the player can currently see
++        self.explored = np.full((width, height), fill_value=False, order="F")  # Tiles the player has seen before
++
+     def get_blocking_entity_at_location(
+         self,
+         location_x: int,
+@@ -38,10 +41,17 @@ def render(self, console: tcod.console.Console) -> None:
+         """
+         Renders the map.
+ 
+-        For now, we'll render all tiles as visible.
+-        In Part 4 we'll add FOV.
++        If a tile is in the "visible" array, then draw it with the "light" colors.
++        If it isn't, but it's in the "explored" array, then draw it with the "dark" colors.
++        Otherwise, the default is "SHROUD".
+         """
+-        console.rgb[0 : self.width, 0 : self.height] = self.tiles["light"]
++        console.rgb[0 : self.width, 0 : self.height] = np.select(
++            condlist=[self.visible, self.explored],
++            choicelist=[self.tiles["light"], self.tiles["dark"]],
++            default=SHROUD,
++        )
+ 
+         for entity in self.entities:
+-            console.print(x=entity.x, y=entity.y, string=entity.char, fg=entity.color)
++            # Only print entities that are in the FOV
++            if self.visible[entity.x, entity.y]:
++                console.print(x=entity.x, y=entity.y, string=entity.char, fg=entity.color)
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index cd93494..8f8e3dc 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -90,6 +90,8 @@ def handle_action(self, action: Optional[Action]) -> bool:
+             return False
+ 
+         action.perform()
++
++        self.engine.update_fov()  # Update the FOV before the players next action.
+         return True
+ 
+     def on_render(self, console: tcod.console.Console) -> None:
+diff --git a/main.py b/main.py
+index 8e67502..f58bc90 100755
+--- a/main.py
++++ b/main.py
+@@ -32,6 +32,7 @@ def main() -> None:
+         map_height=map_height,
+         engine=engine,
+     )
++    engine.update_fov()
+ 
+     # Part 10 refactoring: Track handler in main loop
+     handler: BaseEventHandler = MainGameEventHandler(engine)

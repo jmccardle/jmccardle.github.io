@@ -1,0 +1,899 @@
+diff --git a/game/actions.py b/game/actions.py
+index 21c06b5..e6fffd7 100644
+--- a/game/actions.py
++++ b/game/actions.py
+@@ -2,7 +2,7 @@
+ 
+ from typing import TYPE_CHECKING, Optional, Tuple
+ 
+-from game.color import enemy_atk, player_atk
++from game.color import descend, enemy_atk, player_atk
+ from game.entity import Actor
+ from game.exceptions import Impossible
+ 
+@@ -173,3 +173,15 @@ def perform(self) -> None:
+         # Type check to ensure entity is an Actor with inventory
+         assert isinstance(self.entity, Actor), "Entity must be an Actor for inventory access"
+         self.entity.inventory.drop(self.item)
++
++
++class TakeStairsAction(Action):
++    def perform(self) -> None:
++        """
++        Take the stairs, if any exist at the entity's location.
++        """
++        if (self.entity.x, self.entity.y) == self.engine.game_map.downstairs_location:
++            self.engine.game_world.generate_floor()
++            self.engine.message_log.add_message("You descend the staircase.", descend)
++        else:
++            raise game.exceptions.Impossible("There are no stairs here.")
+diff --git a/game/color.py b/game/color.py
+index a639fb4..08fcb28 100644
+--- a/game/color.py
++++ b/game/color.py
+@@ -15,6 +15,8 @@
+ needs_target = (0x3F, 0xFF, 0xFF)
+ status_effect_applied = (0x3F, 0xFF, 0x3F)
+ 
++descend = (0x9F, 0x3F, 0xFF)
++
+ bar_text = white
+ bar_filled = (0x0, 0x60, 0x0)
+ bar_empty = (0x40, 0x10, 0x10)
+diff --git a/game/components/consumable.py b/game/components/consumable.py
+index cb7071b..ef9777f 100644
+--- a/game/components/consumable.py
++++ b/game/components/consumable.py
+@@ -1,28 +1,28 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING, Optional
++from typing import TYPE_CHECKING, Optional, Union
+ 
+-from game.actions import Action, ItemAction
+-from game.color import health_recovered
+-from game.components.ai import ConfusedEnemy
+-from game.components.base_component import BaseComponent
+-from game.components.inventory import Inventory
+-from game.entity import Actor, Item
+-from game.exceptions import Impossible
+-from game.input_handlers import ActionOrHandler, AreaRangedAttackHandler, SingleRangedAttackHandler
++import game.actions
++import game.color
++import game.components.ai
++import game.components.base_component
++import game.exceptions
++import game.input_handlers
+ 
+ if TYPE_CHECKING:
+-    import game.actions
++    import game.entity
+ 
+ 
+-class Consumable(BaseComponent):
+-    parent: Item
++class Consumable(game.components.base_component.BaseComponent):
++    parent: game.entity.Item
+ 
+-    def get_action(self, consumer: Actor) -> Optional[Action]:
++    def get_action(
++        self, consumer: game.entity.Actor
++    ) -> Optional[Union[game.actions.Action, game.input_handlers.BaseEventHandler]]:
+         """Try to return the action for this item."""
+-        return ItemAction(consumer, self.parent)
++        return game.actions.ItemAction(consumer, self.parent)
+ 
+-    def activate(self, action: ItemAction) -> None:
++    def activate(self, action: game.actions.ItemAction) -> None:
+         """Invoke this items ability.
+ 
+         `action` is the context for this activation.
+@@ -33,7 +33,7 @@ def consume(self) -> None:
+         """Remove the consumed item from its containing inventory."""
+         entity = self.parent
+         inventory = entity.parent
+-        if isinstance(inventory, Inventory):
++        if isinstance(inventory, game.components.inventory.Inventory):
+             inventory.items.remove(entity)
+ 
+ 
+@@ -41,20 +41,20 @@ class HealingConsumable(Consumable):
+     def __init__(self, amount: int):
+         self.amount = amount
+ 
+-    def activate(self, action: ItemAction) -> None:
++    def activate(self, action: game.actions.ItemAction) -> None:
+         # Type check to ensure consumer is an Actor
+-        assert isinstance(action.entity, Actor), "Consumer must be an Actor"
++        assert isinstance(action.entity, game.entity.Actor), "Consumer must be an Actor"
+         consumer = action.entity
+         amount_recovered = consumer.fighter.heal(self.amount)
+ 
+         if amount_recovered > 0:
+             self.engine.message_log.add_message(
+                 f"You consume the {self.parent.name}, and recover {amount_recovered} HP!",
+-                health_recovered,
++                game.color.health_recovered,
+             )
+             self.consume()
+         else:
+-            raise Impossible("Your health is already full.")
++            raise game.exceptions.Impossible("Your health is already full.")
+ 
+ 
+ class LightningDamageConsumable(Consumable):
+@@ -89,9 +89,9 @@ class ConfusionConsumable(Consumable):
+     def __init__(self, number_of_turns: int):
+         self.number_of_turns = number_of_turns
+ 
+-    def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:
++    def get_action(self, consumer: game.entity.Actor) -> Optional[game.input_handlers.ActionOrHandler]:
+         self.engine.message_log.add_message("Select a target location.", game.color.needs_target)
+-        return SingleRangedAttackHandler(
++        return game.input_handlers.SingleRangedAttackHandler(
+             self.engine,
+             callback=lambda xy: game.actions.ItemAction(consumer, self.parent, xy),
+         )
+@@ -111,7 +111,7 @@ def activate(self, action: game.actions.ItemAction) -> None:
+             f"The eyes of the {target.name} look vacant, as it starts to stumble around!",
+             game.color.status_effect_applied,
+         )
+-        target.ai = ConfusedEnemy(
++        target.ai = game.components.ai.ConfusedEnemy(
+             entity=target,
+             previous_ai=target.ai,
+             turns_remaining=self.number_of_turns,
+@@ -124,9 +124,9 @@ def __init__(self, damage: int, radius: int):
+         self.damage = damage
+         self.radius = radius
+ 
+-    def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:
++    def get_action(self, consumer: game.entity.Actor) -> Optional[game.input_handlers.ActionOrHandler]:
+         self.engine.message_log.add_message("Select a target location.", game.color.needs_target)
+-        return AreaRangedAttackHandler(
++        return game.input_handlers.AreaRangedAttackHandler(
+             self.engine,
+             radius=self.radius,
+             callback=lambda xy: game.actions.ItemAction(consumer, self.parent, xy),
+diff --git a/game/components/fighter.py b/game/components/fighter.py
+index e568adb..2ecc945 100644
+--- a/game/components/fighter.py
++++ b/game/components/fighter.py
+@@ -49,6 +49,8 @@ def die(self) -> None:
+ 
+         self.engine.message_log.add_message(death_message, death_message_color)
+ 
++        self.engine.player.level.add_xp(self.parent.level.xp_given)
++
+     def heal(self, amount: int) -> int:
+         if self.hp == self.max_hp:
+             return 0
+diff --git a/game/components/level.py b/game/components/level.py
+new file mode 100644
+index 0000000..ad6aadc
+--- /dev/null
++++ b/game/components/level.py
+@@ -0,0 +1,68 @@
++from __future__ import annotations
++
++from game.components.base_component import BaseComponent
++import game.entity
++
++
++class Level(BaseComponent):
++    parent: game.entity.Actor
++
++    def __init__(
++        self,
++        current_level: int = 1,
++        current_xp: int = 0,
++        level_up_base: int = 0,
++        level_up_factor: int = 150,
++        xp_given: int = 0,
++    ):
++        self.current_level = current_level
++        self.current_xp = current_xp
++        self.level_up_base = level_up_base
++        self.level_up_factor = level_up_factor
++        self.xp_given = xp_given
++
++    @property
++    def experience_to_next_level(self) -> int:
++        return self.level_up_base + self.current_level * self.level_up_factor
++
++    @property
++    def requires_level_up(self) -> bool:
++        return self.current_xp > self.experience_to_next_level
++
++    def add_xp(self, xp: int) -> None:
++        if xp == 0 or self.level_up_base == 0:
++            return
++
++        self.current_xp += xp
++
++        self.engine.message_log.add_message(f"You gain {xp} experience points.")
++
++        if self.requires_level_up:
++            self.engine.message_log.add_message(f"You advance to level {self.current_level + 1}!")
++
++    def increase_level(self) -> None:
++        self.current_xp -= self.experience_to_next_level
++
++        self.current_level += 1
++
++    def increase_max_hp(self, amount: int = 20) -> None:
++        self.parent.fighter.max_hp += amount
++        self.parent.fighter.hp += amount
++
++        self.engine.message_log.add_message("Your health improves!")
++
++        self.increase_level()
++
++    def increase_power(self, amount: int = 1) -> None:
++        self.parent.fighter.power += amount
++
++        self.engine.message_log.add_message("You feel stronger!")
++
++        self.increase_level()
++
++    def increase_defense(self, amount: int = 1) -> None:
++        self.parent.fighter.defense += amount
++
++        self.engine.message_log.add_message("Your movements are getting swifter!")
++
++        self.increase_level()
+diff --git a/game/engine.py b/game/engine.py
+index 1159f2c..1e89016 100644
+--- a/game/engine.py
++++ b/game/engine.py
+@@ -6,10 +6,10 @@
+ 
+ import tcod
+ 
+-from game.color import welcome_text
+-from game.entity import Actor
+-from game.message_log import MessageLog
+-from game.render_functions import render_bar, render_names_at_mouse_location
++import game.color
++import game.entity
++import game.message_log
++import game.render_functions
+ 
+ if TYPE_CHECKING:
+     import game.game_map
+@@ -17,11 +17,12 @@
+ 
+ class Engine:
+     game_map: game.game_map.GameMap
++    game_world: game.game_map.GameWorld
+ 
+-    def __init__(self, player: Actor):
++    def __init__(self, player: game.entity.Actor):
+         self.player = player
+         self.mouse_location = (0, 0)
+-        self.message_log = MessageLog()
++        self.message_log = game.message_log.MessageLog()
+ 
+     def update_fov(self) -> None:
+         """Recompute the visible area based on the players point of view."""
+@@ -45,14 +46,26 @@ def render(self, console: tcod.console.Console) -> None:
+ 
+         self.message_log.render(console=console, x=21, y=45, width=40, height=5)
+ 
+-        render_bar(
++        game.render_functions.render_bar(
+             console=console,
+             current_value=self.player.fighter.hp,
+             maximum_value=self.player.fighter.max_hp,
+             total_width=20,
+         )
+ 
+-        render_names_at_mouse_location(console=console, x=21, y=44, engine=self)
++        game.render_functions.render_dungeon_level(
++            console=console,
++            dungeon_level=self.game_world.current_floor,
++            location=(0, 47),
++        )
++
++        console.print(
++            x=0,
++            y=46,
++            string=f"LVL: {self.player.level.current_level}",
++        )
++
++        game.render_functions.render_names_at_mouse_location(console=console, x=21, y=44, engine=self)
+ 
+     def save_as(self, filename: str) -> None:
+         """Save this Engine instance as a compressed file."""
+diff --git a/game/entity.py b/game/entity.py
+index 1ffcc11..36c96d9 100644
+--- a/game/entity.py
++++ b/game/entity.py
+@@ -2,6 +2,7 @@
+ 
+ from typing import TYPE_CHECKING, Optional, Tuple, Type, Union
+ 
++from game.game_map import GameMap
+ from game.render_order import RenderOrder
+ 
+ if TYPE_CHECKING:
+@@ -9,8 +10,8 @@
+     import game.components.consumable
+     import game.components.fighter
+     import game.components.inventory
+-
+-from game.game_map import GameMap
++    import game.components.level
++    import game.game_map
+ 
+ 
+ class Entity:
+@@ -85,6 +86,7 @@ def __init__(
+         ai_cls: Type[game.components.ai.BaseAI],
+         fighter: game.components.fighter.Fighter,
+         inventory: game.components.inventory.Inventory,
++        level: game.components.level.Level,
+     ):
+         super().__init__(
+             parent=None,
+@@ -104,6 +106,9 @@ def __init__(
+         self.inventory = inventory
+         self.inventory.parent = self
+ 
++        self.level = level
++        self.level.parent = self
++
+         self.render_order = RenderOrder.ACTOR
+ 
+     @property
+diff --git a/game/entity_factories.py b/game/entity_factories.py
+index 0ca9b4f..0f58660 100644
+--- a/game/entity_factories.py
++++ b/game/entity_factories.py
+@@ -7,6 +7,7 @@
+ )
+ from game.components.fighter import Fighter
+ from game.components.inventory import Inventory
++from game.components.level import Level
+ from game.entity import Actor, Item
+ 
+ player = Actor(
+@@ -16,6 +17,7 @@
+     ai_cls=HostileEnemy,
+     fighter=Fighter(hp=30, defense=2, power=5),
+     inventory=Inventory(capacity=26),
++    level=Level(level_up_base=200),
+ )
+ 
+ orc = Actor(
+@@ -25,6 +27,7 @@
+     ai_cls=HostileEnemy,
+     fighter=Fighter(hp=10, defense=0, power=3),
+     inventory=Inventory(capacity=0),
++    level=Level(xp_given=35),
+ )
+ 
+ troll = Actor(
+@@ -34,6 +37,7 @@
+     ai_cls=HostileEnemy,
+     fighter=Fighter(hp=16, defense=1, power=4),
+     inventory=Inventory(capacity=0),
++    level=Level(xp_given=100),
+ )
+ 
+ health_potion = Item(
+diff --git a/game/game_map.py b/game/game_map.py
+index 4b40750..db65082 100644
+--- a/game/game_map.py
++++ b/game/game_map.py
+@@ -1,27 +1,31 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING, Iterator, Optional, Set
++from typing import TYPE_CHECKING, Iterable, Iterator, Optional, Set
+ 
+ import numpy as np
+ import tcod
+ 
+-from game.tiles import SHROUD, wall
+-import game.entity
++import game.tiles
+ 
+ if TYPE_CHECKING:
+     import game.engine
++    import game.entity
+ 
+ 
+ class GameMap:
+-    def __init__(self, engine: game.engine.Engine, width: int, height: int):
++    def __init__(
++        self, engine: game.engine.Engine, width: int, height: int, entities: Iterable[game.entity.Entity] = ()
++    ):
+         self.engine = engine
+         self.width, self.height = width, height
+-        self.entities: Set[game.entity.Entity] = set()
+-        self.tiles = np.full((width, height), fill_value=wall, order="F")
++        self.entities: Set[game.entity.Entity] = set(entities)
++        self.tiles = np.full((width, height), fill_value=game.tiles.wall, order="F")
+ 
+         self.visible = np.full((width, height), fill_value=False, order="F")  # Tiles the player can currently see
+         self.explored = np.full((width, height), fill_value=False, order="F")  # Tiles the player has seen before
+ 
++        self.downstairs_location = (0, 0)
++
+     @property
+     def gamemap(self) -> GameMap:
+         """Part 8 refactoring prep: self reference for parent system"""
+@@ -73,7 +77,7 @@ def render(self, console: tcod.console.Console) -> None:
+         console.rgb[0 : self.width, 0 : self.height] = np.select(
+             condlist=[self.visible, self.explored],
+             choicelist=[self.tiles["light"], self.tiles["dark"]],
+-            default=SHROUD,
++            default=game.tiles.SHROUD,
+         )
+ 
+         entities_sorted_for_rendering = sorted(self.entities, key=lambda x: x.render_order.value)
+@@ -82,3 +86,62 @@ def render(self, console: tcod.console.Console) -> None:
+             # Only print entities that are in the FOV
+             if self.visible[entity.x, entity.y]:
+                 console.print(x=entity.x, y=entity.y, string=entity.char, fg=entity.color)
++
++        # Show stairs
++        if self.visible[self.downstairs_location]:
++            console.print(
++                x=self.downstairs_location[0],
++                y=self.downstairs_location[1],
++                string=">",
++                fg=(255, 255, 255),
++            )
++
++
++class GameWorld:
++    """
++    Holds the settings for the GameMap, and generates new maps when moving down the stairs.
++    """
++
++    def __init__(
++        self,
++        *,
++        engine: game.engine.Engine,
++        map_width: int,
++        map_height: int,
++        max_rooms: int,
++        room_min_size: int,
++        room_max_size: int,
++        max_monsters_per_room: int,
++        max_items_per_room: int,
++        current_floor: int = 0,
++    ):
++        self.engine = engine
++
++        self.map_width = map_width
++        self.map_height = map_height
++
++        self.max_rooms = max_rooms
++
++        self.room_min_size = room_min_size
++        self.room_max_size = room_max_size
++
++        self.max_monsters_per_room = max_monsters_per_room
++        self.max_items_per_room = max_items_per_room
++
++        self.current_floor = current_floor
++
++    def generate_floor(self) -> None:
++        from game.procgen import generate_dungeon
++
++        self.current_floor += 1
++
++        self.engine.game_map = generate_dungeon(
++            max_rooms=self.max_rooms,
++            room_min_size=self.room_min_size,
++            room_max_size=self.room_max_size,
++            map_width=self.map_width,
++            map_height=self.map_height,
++            max_monsters_per_room=self.max_monsters_per_room,
++            max_items_per_room=self.max_items_per_room,
++            engine=self.engine,
++        )
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index 8419217..9c6689d 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -5,17 +5,17 @@
+ from tcod import libtcodpy
+ import tcod.event
+ 
+-from game.actions import Action, BumpAction, DropItem, EscapeAction, PickupAction, WaitAction
+-from game.color import black, impossible, invalid, red, white
+-from game.entity import Actor
+-from game.exceptions import Impossible
++import game.actions
++import game.color
++import game.entity
++import game.exceptions
+ 
+ if TYPE_CHECKING:
+     import game.engine
+     import game.entity
+ 
+ # Part 10 refactoring: ActionOrHandler type
+-ActionOrHandler = Union[Action, "BaseEventHandler"]
++ActionOrHandler = Union[game.actions.Action, "BaseEventHandler"]
+ """An event handler return value which can trigger an action or switch active handlers.
+ 
+ If a handler is returned then it will become the active handler for future events.
+@@ -62,13 +62,13 @@ def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
+         state = self.dispatch(event)
+         if isinstance(state, BaseEventHandler):
+             return state
+-        assert not isinstance(state, Action), f"{self!r} can not handle actions."
++        assert not isinstance(state, game.actions.Action), f"{self!r} can not handle actions."
+         return self
+ 
+     def on_render(self, console: tcod.console.Console) -> None:
+         raise NotImplementedError()
+ 
+-    def ev_quit(self, event: tcod.event.Quit) -> Optional[Action]:
++    def ev_quit(self, event: tcod.event.Quit) -> Optional[game.actions.Action]:
+         raise SystemExit()
+ 
+     def ev_mousemotion(self, event: tcod.event.MouseMotion) -> None:
+@@ -87,14 +87,16 @@ def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
+         if self.handle_action(action_or_state):
+             # A valid action was performed.
+             # Type check to ensure player is an Actor before accessing is_alive
+-            assert isinstance(self.engine.player, Actor), "Player must be an Actor"
++            assert isinstance(self.engine.player, game.entity.Actor), "Player must be an Actor"
+             if not self.engine.player.is_alive:
+                 # The player was killed sometime during or after the action.
+                 return GameOverEventHandler(self.engine)
++            elif self.engine.player.level.requires_level_up:
++                return LevelUpEventHandler(self.engine)
+             return MainGameEventHandler(self.engine)  # Return to the main handler.
+         return self
+ 
+-    def handle_action(self, action: Optional[Action]) -> bool:
++    def handle_action(self, action: Optional[game.actions.Action]) -> bool:
+         """Handle actions returned from event methods.
+ 
+         Returns True if the action will advance a turn.
+@@ -104,8 +106,8 @@ def handle_action(self, action: Optional[Action]) -> bool:
+ 
+         try:
+             action.perform()
+-        except Impossible as exc:
+-            self.engine.message_log.add_message(exc.args[0], impossible)
++        except game.exceptions.Impossible as exc:
++            self.engine.message_log.add_message(exc.args[0], game.color.impossible)
+             return False  # Skip enemy turn on exceptions.
+ 
+         self.engine.handle_enemy_turns()
+@@ -122,7 +124,7 @@ def ev_mousemotion(self, event: tcod.event.MouseMotion) -> None:
+ 
+ class MainGameEventHandler(EventHandler):
+     def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+-        action: Optional[Action] = None
++        action: Optional[game.actions.Action] = None
+ 
+         key = event.sym
+         modifiers = event.mod
+@@ -131,22 +133,26 @@ def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+ 
+         if key in MOVE_KEYS:
+             dx, dy = MOVE_KEYS[key]
+-            action = BumpAction(player, dx, dy)
++            action = game.actions.BumpAction(player, dx, dy)
+         elif key == tcod.event.KeySym.ESCAPE:
+-            action = EscapeAction(player)
++            action = game.actions.EscapeAction(player)
+         elif key == tcod.event.KeySym.V:
+             return HistoryViewer(self.engine)
+         elif key == tcod.event.KeySym.G:
+-            action = PickupAction(player)
++            action = game.actions.PickupAction(player)
+         elif key == tcod.event.KeySym.I:
+             return InventoryActivateHandler(self.engine)
+         elif key == tcod.event.KeySym.D:
+             return InventoryDropHandler(self.engine)
+         elif key == tcod.event.KeySym.SLASH:
+             return LookHandler(self.engine)
+-        elif key == tcod.event.KeySym.PERIOD and modifiers & (tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT):
+-            # Wait if user presses '>' (shift + period)
+-            action = WaitAction(player)
++        elif key == tcod.event.KeySym.PERIOD:
++            if modifiers & (tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT):
++                # Take stairs down if user presses '>'
++                return game.actions.TakeStairsAction(player)
++            else:
++                # Wait if user presses '.'
++                action = game.actions.WaitAction(player)
+ 
+         # No valid key was pressed
+         return action
+@@ -288,7 +294,7 @@ def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+             try:
+                 selected_item = player.inventory.items[index]
+             except IndexError:
+-                self.engine.message_log.add_message("Invalid entry.", invalid)
++                self.engine.message_log.add_message("Invalid entry.", game.color.invalid)
+                 return None
+             return self.on_item_selected(selected_item)
+         return super().ev_keydown(event)
+@@ -308,7 +314,7 @@ def on_item_selected(self, item: game.entity.Item) -> Optional[ActionOrHandler]:
+         if item.consumable is not None:
+             return item.consumable.get_action(self.engine.player)
+         else:
+-            self.engine.message_log.add_message("This item cannot be used.", invalid)
++            self.engine.message_log.add_message("This item cannot be used.", game.color.invalid)
+             return None
+ 
+ 
+@@ -319,7 +325,7 @@ class InventoryDropHandler(InventoryEventHandler):
+ 
+     def on_item_selected(self, item: game.entity.Item) -> Optional[ActionOrHandler]:
+         """Drop this item."""
+-        return DropItem(self.engine.player, item)
++        return game.actions.DropItem(self.engine.player, item)
+ 
+ 
+ class SelectIndexHandler(AskUserEventHandler):
+@@ -335,8 +341,8 @@ def on_render(self, console: tcod.console.Console) -> None:
+         """Highlight the tile under the cursor."""
+         super().on_render(console)
+         x, y = self.engine.mouse_location
+-        console.rgb["bg"][x, y] = white
+-        console.rgb["fg"][x, y] = black
++        console.rgb["bg"][x, y] = game.color.white
++        console.rgb["fg"][x, y] = game.color.black
+ 
+     def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+         """Check for key movement or confirmation keys."""
+@@ -424,7 +430,7 @@ def on_render(self, console: tcod.console.Console) -> None:
+             y=y - self.radius - 1,
+             width=self.radius**2,
+             height=self.radius**2,
+-            fg=red,
++            fg=game.color.red,
+             clear=False,
+         )
+ 
+@@ -457,3 +463,70 @@ def on_render(self, console: tcod.console.Console) -> None:
+     def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[BaseEventHandler]:
+         """Any key returns to the parent handler."""
+         return self.parent
++
++
++class LevelUpEventHandler(AskUserEventHandler):
++    TITLE = "Level Up"
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        super().on_render(console)
++
++        if self.engine.player.x <= 30:
++            x = 40
++        else:
++            x = 0
++
++        console.draw_frame(
++            x=x,
++            y=0,
++            width=35,
++            height=8,
++            title=self.TITLE,
++            clear=True,
++            fg=(255, 255, 255),
++            bg=(0, 0, 0),
++        )
++
++        console.print(x=x + 1, y=1, string="Congratulations! You level up!")
++        console.print(x=x + 1, y=2, string="Select an attribute to increase.")
++
++        console.print(
++            x=x + 1,
++            y=4,
++            string=f"a) Constitution (+20 HP, from {self.engine.player.fighter.max_hp})",
++        )
++        console.print(
++            x=x + 1,
++            y=5,
++            string=f"b) Strength (+1 attack, from {self.engine.player.fighter.power})",
++        )
++        console.print(
++            x=x + 1,
++            y=6,
++            string=f"c) Agility (+1 defense, from {self.engine.player.fighter.defense})",
++        )
++
++    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
++        player = self.engine.player
++        key = event.sym
++        index = key - tcod.event.KeySym.A
++
++        if 0 <= index <= 2:
++            if index == 0:
++                player.level.increase_max_hp()
++            elif index == 1:
++                player.level.increase_power()
++            else:
++                player.level.increase_defense()
++        else:
++            self.engine.message_log.add_message("Invalid entry.", game.color.invalid)
++
++            return None
++
++        return super().ev_keydown(event)
++
++    def ev_mousebuttondown(self, event: tcod.event.MouseButtonDown) -> Optional[ActionOrHandler]:
++        """
++        Don't allow the player to click to exit the menu, like normal.
++        """
++        return None
+diff --git a/game/procgen.py b/game/procgen.py
+index cd84b50..d639703 100644
+--- a/game/procgen.py
++++ b/game/procgen.py
+@@ -144,4 +144,7 @@ def generate_dungeon(
+         # Finally, append the new room to the list.
+         rooms.append(new_room)
+ 
++    # Add stairs going down
++    dungeon.downstairs_location = rooms[-1].center
++
+     return dungeon
+diff --git a/game/render_functions.py b/game/render_functions.py
+index d123ccc..8162614 100644
+--- a/game/render_functions.py
++++ b/game/render_functions.py
+@@ -1,6 +1,6 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING
++from typing import TYPE_CHECKING, Tuple
+ 
+ import tcod
+ 
+@@ -42,3 +42,12 @@ def render_names_at_mouse_location(console: tcod.console.Console, x: int, y: int
+     names_at_mouse_location = get_names_at_location(x=mouse_x, y=mouse_y, game_map=engine.game_map)
+ 
+     console.print(x=x, y=y, string=names_at_mouse_location)
++
++
++def render_dungeon_level(console: tcod.console.Console, dungeon_level: int, location: Tuple[int, int]) -> None:
++    """
++    Render the level the player is currently on, at the given location.
++    """
++    x, y = location
++
++    console.print(x=x, y=y, string=f"Dungeon level: {dungeon_level}")
+diff --git a/game/setup_game.py b/game/setup_game.py
+index 6ab8524..bab2183 100644
+--- a/game/setup_game.py
++++ b/game/setup_game.py
+@@ -8,23 +8,27 @@
+ import pickle
+ import traceback
+ 
+-from PIL import Image
+ from tcod import libtcodpy
+-import numpy as np
+ import tcod
+ 
+-from game.color import black, menu_text, menu_title, welcome_text
+-from game.engine import Engine
+-from game.input_handlers import BaseEventHandler, MainGameEventHandler, PopupMessage
+-from game.procgen import generate_dungeon
++import game.color
++import game.engine
+ import game.entity_factories
+ import game.game_map
++import game.input_handlers
++import game.procgen
+ 
+ # Load the background image and remove the alpha channel.
+-background_image = np.array(Image.open("data/menu_background.png").convert("RGB"))
++try:
++    background_image = tcod.image.load("data/menu_background.png")[:, :, :3]
++except FileNotFoundError:
++    # Create a placeholder background if image is missing
++    import numpy as np
+ 
++    background_image = np.zeros((80, 50, 3), dtype=np.uint8)
+ 
+-def new_game() -> Engine:
++
++def new_game() -> game.engine.Engine:
+     """Return a brand new game session as an Engine instance."""
+     map_width = 80
+     map_height = 43
+@@ -38,9 +42,10 @@ def new_game() -> Engine:
+ 
+     player = copy.deepcopy(game.entity_factories.player)
+ 
+-    engine = Engine(player=player)
++    engine = game.engine.Engine(player=player)
+ 
+-    engine.game_map = generate_dungeon(
++    engine.game_world = game.game_map.GameWorld(
++        engine=engine,
+         max_rooms=max_rooms,
+         room_min_size=room_min_size,
+         room_max_size=room_max_size,
+@@ -48,23 +53,23 @@ def new_game() -> Engine:
+         map_height=map_height,
+         max_monsters_per_room=max_monsters_per_room,
+         max_items_per_room=max_items_per_room,
+-        engine=engine,
+     )
++    engine.game_world.generate_floor()
+     engine.update_fov()
+ 
+-    engine.message_log.add_message("Hello and welcome, adventurer, to yet another dungeon!", welcome_text)
++    engine.message_log.add_message("Hello and welcome, adventurer, to yet another dungeon!", game.color.welcome_text)
+     return engine
+ 
+ 
+-def load_game(filename: str) -> Engine:
++def load_game(filename: str) -> game.engine.Engine:
+     """Load an Engine instance from a file."""
+     with open(filename, "rb") as f:
+         engine = pickle.loads(lzma.decompress(f.read()))
+-    assert isinstance(engine, Engine)
++    assert isinstance(engine, game.engine.Engine)
+     return engine
+ 
+ 
+-class MainMenu(BaseEventHandler):
++class MainMenu(game.input_handlers.BaseEventHandler):
+     """Handle the main menu rendering and input."""
+ 
+     def on_render(self, console: tcod.console.Console) -> None:
+@@ -75,14 +80,14 @@ def on_render(self, console: tcod.console.Console) -> None:
+             console.width // 2,
+             console.height // 2 - 4,
+             "TOMBS OF THE ANCIENT KINGS",
+-            fg=menu_title,
++            fg=game.color.menu_title,
+             alignment=libtcodpy.CENTER,
+         )
+         console.print(
+             console.width // 2,
+             console.height - 2,
+             "By (Your name here)",
+-            fg=menu_title,
++            fg=game.color.menu_title,
+             alignment=libtcodpy.CENTER,
+         )
+ 
+@@ -92,24 +97,24 @@ def on_render(self, console: tcod.console.Console) -> None:
+                 console.width // 2,
+                 console.height // 2 - 2 + i,
+                 text.ljust(menu_width),
+-                fg=menu_text,
+-                bg=black,
++                fg=game.color.menu_text,
++                bg=game.color.black,
+                 alignment=libtcodpy.CENTER,
+                 bg_blend=libtcodpy.BKGND_ALPHA(64),
+             )
+ 
+-    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[BaseEventHandler]:
++    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[game.input_handlers.BaseEventHandler]:
+         if event.sym in (tcod.event.KeySym.Q, tcod.event.KeySym.ESCAPE):
+             raise SystemExit()
+         elif event.sym == tcod.event.KeySym.C:
+             try:
+-                return MainGameEventHandler(load_game("savegame.sav"))
++                return game.input_handlers.MainGameEventHandler(load_game("savegame.sav"))
+             except FileNotFoundError:
+-                return PopupMessage(self, "No saved game to load.")
++                return game.input_handlers.PopupMessage(self, "No saved game to load.")
+             except Exception as exc:
+                 traceback.print_exc()  # Print to stderr.
+-                return PopupMessage(self, f"Failed to load save:\n{exc}")
++                return game.input_handlers.PopupMessage(self, f"Failed to load save:\n{exc}")
+         elif event.sym == tcod.event.KeySym.N:
+-            return MainGameEventHandler(new_game())
++            return game.input_handlers.MainGameEventHandler(new_game())
+ 
+         return None

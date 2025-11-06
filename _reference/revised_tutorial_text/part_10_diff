@@ -1,0 +1,312 @@
+diff --git a/game/color.py b/game/color.py
+index d5189d5..a639fb4 100644
+--- a/game/color.py
++++ b/game/color.py
+@@ -19,4 +19,8 @@
+ bar_filled = (0x0, 0x60, 0x0)
+ bar_empty = (0x40, 0x10, 0x10)
+ 
++menu_title = (255, 255, 63)
++menu_text = white
++
+ red = (0xFF, 0x00, 0x00)
++error = (0xFF, 0x40, 0x40)
+diff --git a/game/engine.py b/game/engine.py
+index b32396a..1159f2c 100644
+--- a/game/engine.py
++++ b/game/engine.py
+@@ -1,6 +1,8 @@
+ from __future__ import annotations
+ 
+ from typing import TYPE_CHECKING
++import lzma
++import pickle
+ 
+ import tcod
+ 
+@@ -20,7 +22,6 @@ def __init__(self, player: Actor):
+         self.player = player
+         self.mouse_location = (0, 0)
+         self.message_log = MessageLog()
+-        self.message_log.add_message("Hello and welcome, adventurer, to yet another dungeon!", welcome_text)
+ 
+     def update_fov(self) -> None:
+         """Recompute the visible area based on the players point of view."""
+@@ -52,3 +53,9 @@ def render(self, console: tcod.console.Console) -> None:
+         )
+ 
+         render_names_at_mouse_location(console=console, x=21, y=44, engine=self)
++
++    def save_as(self, filename: str) -> None:
++        """Save this Engine instance as a compressed file."""
++        save_data = lzma.compress(pickle.dumps(self))
++        with open(filename, "wb") as f:
++            f.write(save_data)
+diff --git a/game/exceptions.py b/game/exceptions.py
+index 64dbc63..b65b5c5 100644
+--- a/game/exceptions.py
++++ b/game/exceptions.py
+@@ -3,3 +3,7 @@ class Impossible(Exception):
+ 
+     The reason is given as the exception message.
+     """
++
++
++class QuitWithoutSaving(SystemExit):
++    """Can be raised to exit the game without automatically saving."""
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index 9b8d24e..8419217 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -430,3 +430,30 @@ def on_render(self, console: tcod.console.Console) -> None:
+ 
+     def on_index_selected(self, x: int, y: int) -> Optional[game.actions.Action]:
+         return self.callback((x, y))
++
++
++class PopupMessage(BaseEventHandler):
++    """Display a popup text window."""
++
++    def __init__(self, parent_handler: BaseEventHandler, text: str):
++        self.parent = parent_handler
++        self.text = text
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        """Render the parent and dim the result, then print the message on top."""
++        self.parent.on_render(console)
++        console.rgb["fg"] //= 8
++        console.rgb["bg"] //= 8
++
++        console.print(
++            console.width // 2,
++            console.height // 2,
++            self.text,
++            fg=game.color.white,
++            bg=game.color.black,
++            alignment=tcod.CENTER,
++        )
++
++    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[BaseEventHandler]:
++        """Any key returns to the parent handler."""
++        return self.parent
+diff --git a/game/setup_game.py b/game/setup_game.py
+new file mode 100644
+index 0000000..6ab8524
+--- /dev/null
++++ b/game/setup_game.py
+@@ -0,0 +1,115 @@
++"""Handle the loading and initialization of game sessions."""
++
++from __future__ import annotations
++
++from typing import Optional
++import copy
++import lzma
++import pickle
++import traceback
++
++from PIL import Image
++from tcod import libtcodpy
++import numpy as np
++import tcod
++
++from game.color import black, menu_text, menu_title, welcome_text
++from game.engine import Engine
++from game.input_handlers import BaseEventHandler, MainGameEventHandler, PopupMessage
++from game.procgen import generate_dungeon
++import game.entity_factories
++import game.game_map
++
++# Load the background image and remove the alpha channel.
++background_image = np.array(Image.open("data/menu_background.png").convert("RGB"))
++
++
++def new_game() -> Engine:
++    """Return a brand new game session as an Engine instance."""
++    map_width = 80
++    map_height = 43
++
++    room_max_size = 10
++    room_min_size = 6
++    max_rooms = 30
++
++    max_monsters_per_room = 2
++    max_items_per_room = 2
++
++    player = copy.deepcopy(game.entity_factories.player)
++
++    engine = Engine(player=player)
++
++    engine.game_map = generate_dungeon(
++        max_rooms=max_rooms,
++        room_min_size=room_min_size,
++        room_max_size=room_max_size,
++        map_width=map_width,
++        map_height=map_height,
++        max_monsters_per_room=max_monsters_per_room,
++        max_items_per_room=max_items_per_room,
++        engine=engine,
++    )
++    engine.update_fov()
++
++    engine.message_log.add_message("Hello and welcome, adventurer, to yet another dungeon!", welcome_text)
++    return engine
++
++
++def load_game(filename: str) -> Engine:
++    """Load an Engine instance from a file."""
++    with open(filename, "rb") as f:
++        engine = pickle.loads(lzma.decompress(f.read()))
++    assert isinstance(engine, Engine)
++    return engine
++
++
++class MainMenu(BaseEventHandler):
++    """Handle the main menu rendering and input."""
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        """Render the main menu on a background image."""
++        console.draw_semigraphics(background_image, 0, 0)
++
++        console.print(
++            console.width // 2,
++            console.height // 2 - 4,
++            "TOMBS OF THE ANCIENT KINGS",
++            fg=menu_title,
++            alignment=libtcodpy.CENTER,
++        )
++        console.print(
++            console.width // 2,
++            console.height - 2,
++            "By (Your name here)",
++            fg=menu_title,
++            alignment=libtcodpy.CENTER,
++        )
++
++        menu_width = 24
++        for i, text in enumerate(["[N] Play a new game", "[C] Continue last game", "[Q] Quit"]):
++            console.print(
++                console.width // 2,
++                console.height // 2 - 2 + i,
++                text.ljust(menu_width),
++                fg=menu_text,
++                bg=black,
++                alignment=libtcodpy.CENTER,
++                bg_blend=libtcodpy.BKGND_ALPHA(64),
++            )
++
++    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[BaseEventHandler]:
++        if event.sym in (tcod.event.KeySym.Q, tcod.event.KeySym.ESCAPE):
++            raise SystemExit()
++        elif event.sym == tcod.event.KeySym.C:
++            try:
++                return MainGameEventHandler(load_game("savegame.sav"))
++            except FileNotFoundError:
++                return PopupMessage(self, "No saved game to load.")
++            except Exception as exc:
++                traceback.print_exc()  # Print to stderr.
++                return PopupMessage(self, f"Failed to load save:\n{exc}")
++        elif event.sym == tcod.event.KeySym.N:
++            return MainGameEventHandler(new_game())
++
++        return None
+diff --git a/main.py b/main.py
+index 24fed29..d497b5c 100755
+--- a/main.py
++++ b/main.py
+@@ -1,47 +1,31 @@
+ #!/usr/bin/env python3
+-import copy
++import traceback
+ 
+ import tcod
+ 
+ from game.engine import Engine
+ from game.entity import Entity
++from game.exceptions import QuitWithoutSaving
+ from game.input_handlers import BaseEventHandler, MainGameEventHandler
+ from game.procgen import generate_dungeon
++from game.setup_game import MainMenu
+ import game.entity_factories
+ 
+ 
++def save_game(handler: game.input_handlers.BaseEventHandler, filename: str) -> None:
++    """If the current event handler has an active Engine then save it."""
++    if isinstance(handler, game.input_handlers.EventHandler):
++        handler.engine.save_as(filename)
++        print("Game saved.")
++
++
+ def main() -> None:
+     screen_width = 80
+     screen_height = 50
+ 
+-    map_width = 80
+-    map_height = 45
+-
+-    room_max_size = 10
+-    room_min_size = 6
+-    max_rooms = 30
+-    max_monsters_per_room = 2
+-    max_items_per_room = 2
+-
+     tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
+ 
+-    player = copy.deepcopy(game.entity_factories.player)
+-
+-    engine = Engine(player=player)
+-
+-    engine.game_map = generate_dungeon(
+-        max_rooms=max_rooms,
+-        room_min_size=room_min_size,
+-        room_max_size=room_max_size,
+-        map_width=map_width,
+-        map_height=map_height,
+-        max_monsters_per_room=max_monsters_per_room,
+-        max_items_per_room=max_items_per_room,
+-        engine=engine,
+-    )
+-    engine.update_fov()
+-
+-    handler: BaseEventHandler = MainGameEventHandler(engine)
++    handler: game.input_handlers.BaseEventHandler = MainMenu()
+ 
+     with tcod.context.new(
+         columns=screen_width,
+@@ -51,14 +35,29 @@ def main() -> None:
+         vsync=True,
+     ) as context:
+         root_console = tcod.console.Console(screen_width, screen_height, order="F")
+-        while True:
+-            root_console.clear()
+-            handler.on_render(console=root_console)
+-            context.present(root_console)
++        try:
++            while True:
++                root_console.clear()
++                handler.on_render(console=root_console)
++                context.present(root_console)
+ 
+-            for event in tcod.event.wait():
+-                event = context.convert_event(event)
+-                handler = handler.handle_events(event)
++                try:
++                    for event in tcod.event.wait():
++                        event = context.convert_event(event)
++                        handler = handler.handle_events(event)
++                except Exception:  # Handle exceptions in game.
++                    traceback.print_exc()  # Print error to stderr.
++                    # Then print the error to the message log.
++                    if isinstance(handler, game.input_handlers.EventHandler):
++                        handler.engine.message_log.add_message(traceback.format_exc(), game.color.error)
++        except QuitWithoutSaving:
++            raise
++        except SystemExit:  # Save and quit.
++            save_game(handler, "savegame.sav")
++            raise
++        except BaseException:  # Save on any other unexpected exception.
++            save_game(handler, "savegame.sav")
++            raise
+ 
+ 
+ if __name__ == "__main__":

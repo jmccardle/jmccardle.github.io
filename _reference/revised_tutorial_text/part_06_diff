@@ -1,0 +1,511 @@
+diff --git a/game/actions.py b/game/actions.py
+index 78e083f..1e0126e 100644
+--- a/game/actions.py
++++ b/game/actions.py
+@@ -15,6 +15,7 @@ def __init__(self, entity: game.entity.Entity) -> None:
+     @property
+     def engine(self) -> game.engine.Engine:
+         """Return the engine this action belongs to."""
++        assert self.entity.gamemap is not None, "Entity must be placed on a gamemap"
+         return self.entity.gamemap.engine
+ 
+     def perform(self) -> None:
+@@ -67,11 +68,22 @@ def perform(self) -> None:
+ 
+ class MeleeAction(ActionWithDirection):
+     def perform(self) -> None:
+-        target = self.blocking_entity
++        target = self.target_actor
+         if not target:
+             return  # No entity to attack.
+ 
+-        print(f"You kick the {target.name}, much to its annoyance!")
++        # Type checking to ensure both entities are Actors with fighter components
++        assert isinstance(self.entity, game.entity.Actor), "Attacker must be an Actor"
++        assert isinstance(target, game.entity.Actor), "Target must be an Actor"
++
++        damage = self.entity.fighter.power - target.fighter.defense
++
++        attack_desc = f"{self.entity.name.capitalize()} attacks {target.name}"
++        if damage > 0:
++            print(f"{attack_desc} for {damage} hit points.")
++            target.fighter.hp -= damage
++        else:
++            print(f"{attack_desc} but does no damage.")
+ 
+ 
+ class MovementAction(ActionWithDirection):
+diff --git a/game/components/__init__.py b/game/components/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/game/components/ai.py b/game/components/ai.py
+new file mode 100644
+index 0000000..6c2c536
+--- /dev/null
++++ b/game/components/ai.py
+@@ -0,0 +1,75 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, List, Tuple
++
++import numpy as np
++import tcod
++
++from game.actions import Action, MeleeAction, MovementAction
++
++if TYPE_CHECKING:
++    import game.entity
++
++
++class BaseAI(Action):
++    entity: game.entity.Actor
++
++    def perform(self) -> None:
++        raise NotImplementedError()
++
++    def get_path_to(self, dest_x: int, dest_y: int) -> List[Tuple[int, int]]:
++        """Compute and return a path to the target position.
++
++        If there is no valid path then returns an empty list.
++        """
++        # Copy the walkable array.
++        gamemap = self.entity.gamemap
++        assert gamemap is not None
++        cost = np.array(gamemap.tiles["walkable"], dtype=np.int8)
++
++        for entity in gamemap.entities:
++            # Check that an entity blocks movement and the cost isn't zero (blocking.)
++            if entity.blocks_movement and cost[entity.x, entity.y]:
++                # Add to the cost of a blocked position.
++                # A lower number means more enemies will crowd behind each other in
++                # hallways.  A higher number means enemies will take longer paths in
++                # order to surround the player.
++                cost[entity.x, entity.y] += 10
++
++        # Create a graph from the cost array and pass that graph to a new pathfinder.
++        graph = tcod.path.SimpleGraph(cost=cost, cardinal=2, diagonal=3)
++        pathfinder = tcod.path.Pathfinder(graph)
++
++        pathfinder.add_root((self.entity.x, self.entity.y))  # Start position.
++
++        # Compute the path to the destination and remove the starting point.
++        path: List[List[int]] = pathfinder.path_to((dest_x, dest_y))[1:].tolist()
++
++        # Convert from List[List[int]] to List[Tuple[int, int]].
++        return [(index[0], index[1]) for index in path]
++
++
++class HostileEnemy(BaseAI):
++    def __init__(self, entity: game.entity.Actor):
++        super().__init__(entity)
++        self.path: List[Tuple[int, int]] = []
++
++    def perform(self) -> None:
++        target = self.engine.player
++        dx = target.x - self.entity.x
++        dy = target.y - self.entity.y
++        distance = max(abs(dx), abs(dy))  # Chebyshev distance.
++
++        if self.engine.game_map.visible[self.entity.x, self.entity.y]:
++            if distance <= 1:
++                return MeleeAction(self.entity, dx, dy).perform()
++
++            self.path = self.get_path_to(target.x, target.y)
++
++        if self.path:
++            dest_x, dest_y = self.path.pop(0)
++            return MovementAction(
++                self.entity,
++                dest_x - self.entity.x,
++                dest_y - self.entity.y,
++            ).perform()
+diff --git a/game/components/base_component.py b/game/components/base_component.py
+new file mode 100644
+index 0000000..3e535ed
+--- /dev/null
++++ b/game/components/base_component.py
+@@ -0,0 +1,22 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
++if TYPE_CHECKING:
++    import game.engine
++    import game.entity
++    import game.game_map
++
++
++class BaseComponent:
++    parent: game.entity.Entity  # Owning entity instance.
++
++    @property
++    def gamemap(self) -> game.game_map.GameMap:
++        gamemap = self.parent.gamemap
++        assert gamemap is not None
++        return gamemap
++
++    @property
++    def engine(self) -> game.engine.Engine:
++        return self.gamemap.engine
+diff --git a/game/components/fighter.py b/game/components/fighter.py
+new file mode 100644
+index 0000000..8e4e068
+--- /dev/null
++++ b/game/components/fighter.py
+@@ -0,0 +1,47 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
++from game.components.base_component import BaseComponent
++from game.render_order import RenderOrder
++import game.input_handlers
++
++if TYPE_CHECKING:
++    import game.entity
++
++
++class Fighter(BaseComponent):
++    parent: game.entity.Actor
++
++    def __init__(self, hp: int, defense: int, power: int):
++        self.max_hp = hp
++        self._hp = hp
++        self.defense = defense
++        self.power = power
++
++    @property
++    def hp(self) -> int:
++        return self._hp
++
++    @hp.setter
++    def hp(self, value: int) -> None:
++        self._hp = max(0, min(value, self.max_hp))
++        if self._hp == 0 and self.parent.ai:
++            self.die()
++
++    def die(self) -> None:
++        if self.engine.player is self.parent:
++            death_message = "You died!"
++            # Part 10 refactoring: Don't set event_handler here
++            # GameOverEventHandler will be returned in handle_action
++        else:
++            death_message = f"{self.parent.name} is dead!"
++
++        self.parent.char = "%"
++        self.parent.color = (191, 0, 0)
++        self.parent.blocks_movement = False
++        self.parent.ai = None
++        self.parent.name = f"remains of {self.parent.name}"
++        self.parent.render_order = RenderOrder.CORPSE
++
++        print(death_message)
+diff --git a/game/engine.py b/game/engine.py
+index a68b23f..be789d4 100644
+--- a/game/engine.py
++++ b/game/engine.py
+@@ -4,7 +4,7 @@
+ 
+ import tcod
+ 
+-from game.entity import Entity
++from game.entity import Actor
+ 
+ if TYPE_CHECKING:
+     import game.game_map
+@@ -13,7 +13,7 @@
+ class Engine:
+     game_map: game.game_map.GameMap
+ 
+-    def __init__(self, player: Entity):
++    def __init__(self, player: game.entity.Actor):
+         self.player = player
+ 
+     def update_fov(self) -> None:
+@@ -27,8 +27,9 @@ def update_fov(self) -> None:
+         self.game_map.explored |= self.game_map.visible
+ 
+     def handle_enemy_turns(self) -> None:
+-        for entity in set(self.game_map.entities) - {self.player}:
+-            print(f"The {entity.name} wonders when it will get to take a real turn.")
++        for entity in set(self.game_map.actors) - {self.player}:
++            if entity.ai:
++                entity.ai.perform()
+ 
+     def render(self, console: tcod.console.Console) -> None:
+         self.game_map.render(console)
+diff --git a/game/entity.py b/game/entity.py
+index 4ad350b..c4e8cc2 100644
+--- a/game/entity.py
++++ b/game/entity.py
+@@ -1,8 +1,12 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING, Optional, Tuple
++from typing import TYPE_CHECKING, Optional, Tuple, Type
++
++from game.render_order import RenderOrder
+ 
+ if TYPE_CHECKING:
++    import game.components.ai
++    import game.components.fighter
+     import game.game_map
+ 
+ 
+@@ -12,7 +16,7 @@ class Entity:
+     """
+ 
+     # Part 8 refactoring prep: Will become Union[GameMap, Inventory] in Part 8
+-    gamemap: game.game_map.GameMap
++    gamemap: Optional[game.game_map.GameMap]
+ 
+     def __init__(
+         self,
+@@ -30,6 +34,7 @@ def __init__(
+         self.color = color
+         self.name = name
+         self.blocks_movement = blocks_movement
++        self.render_order = RenderOrder.CORPSE
+         if gamemap:
+             # If gamemap isn't provided now then it will be set later.
+             self.gamemap = gamemap
+@@ -40,7 +45,7 @@ def place(self, x: int, y: int, gamemap: Optional[game.game_map.GameMap] = None)
+         self.x = x
+         self.y = y
+         if gamemap:
+-            if hasattr(self, "gamemap"):  # Possibly uninitialized.
++            if hasattr(self, "gamemap") and self.gamemap is not None:  # Possibly uninitialized.
+                 self.gamemap.entities.remove(self)
+             self.gamemap = gamemap
+             gamemap.entities.add(self)
+@@ -49,3 +54,38 @@ def move(self, dx: int, dy: int) -> None:
+         # Move the entity by a given amount
+         self.x += dx
+         self.y += dy
++
++
++class Actor(Entity):
++    def __init__(
++        self,
++        *,
++        x: int = 0,
++        y: int = 0,
++        char: str = "?",
++        color: Tuple[int, int, int] = (255, 255, 255),
++        name: str = "<Unnamed>",
++        ai_cls: Type[game.components.ai.BaseAI],
++        fighter: game.components.fighter.Fighter,
++    ):
++        super().__init__(
++            gamemap=None,
++            x=x,
++            y=y,
++            char=char,
++            color=color,
++            name=name,
++            blocks_movement=True,
++        )
++
++        self.ai: Optional[game.components.ai.BaseAI] = ai_cls(self) if ai_cls else None
++
++        self.fighter = fighter
++        self.fighter.parent = self
++
++        self.render_order = RenderOrder.ACTOR
++
++    @property
++    def is_alive(self) -> bool:
++        """Returns True as long as this actor can perform actions."""
++        return bool(self.ai)
+diff --git a/game/entity_factories.py b/game/entity_factories.py
+new file mode 100644
+index 0000000..4fc3611
+--- /dev/null
++++ b/game/entity_factories.py
+@@ -0,0 +1,27 @@
++from game.components.ai import HostileEnemy
++from game.components.fighter import Fighter
++from game.entity import Actor
++
++player = Actor(
++    char="@",
++    color=(255, 255, 255),
++    name="Player",
++    ai_cls=HostileEnemy,
++    fighter=Fighter(hp=30, defense=2, power=5),
++)
++
++orc = Actor(
++    char="o",
++    color=(63, 127, 63),
++    name="Orc",
++    ai_cls=HostileEnemy,
++    fighter=Fighter(hp=10, defense=0, power=3),
++)
++
++troll = Actor(
++    char="T",
++    color=(0, 127, 0),
++    name="Troll",
++    ai_cls=HostileEnemy,
++    fighter=Fighter(hp=16, defense=1, power=4),
++)
+diff --git a/game/game_map.py b/game/game_map.py
+index bb845ba..515c9d7 100644
+--- a/game/game_map.py
++++ b/game/game_map.py
+@@ -1,6 +1,6 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING, Optional, Set
++from typing import TYPE_CHECKING, Iterator, Optional, Set
+ 
+ import numpy as np
+ import tcod
+@@ -22,6 +22,16 @@ def __init__(self, engine: game.engine.Engine, width: int, height: int):
+         self.visible = np.full((width, height), fill_value=False, order="F")  # Tiles the player can currently see
+         self.explored = np.full((width, height), fill_value=False, order="F")  # Tiles the player has seen before
+ 
++    @property
++    def gamemap(self) -> GameMap:
++        """Part 8 refactoring prep: self reference for parent system"""
++        return self
++
++    @property
++    def actors(self) -> Iterator[game.entity.Actor]:
++        """Iterate over this maps living actors."""
++        yield from (entity for entity in self.entities if isinstance(entity, game.entity.Actor) and entity.is_alive)
++
+     def get_blocking_entity_at_location(
+         self,
+         location_x: int,
+@@ -55,7 +65,9 @@ def render(self, console: tcod.console.Console) -> None:
+             default=SHROUD,
+         )
+ 
+-        for entity in self.entities:
++        entities_sorted_for_rendering = sorted(self.entities, key=lambda x: x.render_order.value)
++
++        for entity in entities_sorted_for_rendering:
+             # Only print entities that are in the FOV
+             if self.visible[entity.x, entity.y]:
+                 console.print(x=entity.x, y=entity.y, string=entity.char, fg=entity.color)
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index e54637c..d19caf7 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -5,6 +5,7 @@
+ import tcod.event
+ 
+ from game.actions import Action, BumpAction, EscapeAction, WaitAction
++from game.entity import Actor
+ 
+ if TYPE_CHECKING:
+     import game.engine
+@@ -78,6 +79,11 @@ def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
+             return action_or_state
+         if self.handle_action(action_or_state):
+             # A valid action was performed.
++            # Type check to ensure player is an Actor before accessing is_alive
++            assert isinstance(self.engine.player, Actor), "Player must be an Actor"
++            if not self.engine.player.is_alive:
++                # The player was killed sometime during or after the action.
++                return GameOverEventHandler(self.engine)
+             return MainGameEventHandler(self.engine)  # Return to the main handler.
+         return self
+ 
+@@ -112,10 +118,18 @@ def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+             dx, dy = MOVE_KEYS[key]
+             action = BumpAction(player, dx, dy)
+         elif key == tcod.event.KeySym.ESCAPE:
+-            action = EscapeAction(player)
+-        elif key == tcod.event.KeySym.PERIOD and modifiers & (tcod.event.Modifier.LSHIFT | tcod.event.Modifier.RSHIFT):
++            action = game.actions.EscapeAction(player)
++        elif key == tcod.event.KeySym.PERIOD and modifiers & (tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT):
+             # Wait if user presses '>' (shift + period)
+             action = WaitAction(player)
+ 
+         # No valid key was pressed
+         return action
++
++
++class GameOverEventHandler(EventHandler):
++    def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
++        action_or_state = self.dispatch(event)
++        if isinstance(action_or_state, BaseEventHandler):
++            return action_or_state
++        return self  # Keep this handler active
+diff --git a/game/procgen.py b/game/procgen.py
+index 97775e3..957ec39 100644
+--- a/game/procgen.py
++++ b/game/procgen.py
+@@ -1,11 +1,13 @@
+ from __future__ import annotations
+ 
+ from typing import TYPE_CHECKING, Iterator, List, Tuple
++import copy
+ import random
+ 
+ import tcod
+ 
+ from game.entity import Entity
++from game.entity_factories import orc, troll
+ from game.game_map import GameMap
+ from game.tiles import floor
+ 
+@@ -68,9 +70,11 @@ def place_entities(
+ 
+         if not any(entity.x == x and entity.y == y for entity in dungeon.entities):
+             if random.random() < 0.8:
+-                Entity(gamemap=dungeon, x=x, y=y, char="o", color=(63, 127, 63), name="Orc", blocks_movement=True)
++                monster = copy.deepcopy(orc)
+             else:
+-                Entity(gamemap=dungeon, x=x, y=y, char="T", color=(0, 127, 0), name="Troll", blocks_movement=True)
++                monster = copy.deepcopy(troll)
++
++            monster.place(x, y, dungeon)
+ 
+ 
+ def generate_dungeon(
+diff --git a/game/render_order.py b/game/render_order.py
+new file mode 100644
+index 0000000..9ead6e6
+--- /dev/null
++++ b/game/render_order.py
+@@ -0,0 +1,7 @@
++from enum import Enum, auto
++
++
++class RenderOrder(Enum):
++    CORPSE = auto()
++    ITEM = auto()
++    ACTOR = auto()
+diff --git a/main.py b/main.py
+index 8990717..727a50b 100755
+--- a/main.py
++++ b/main.py
+@@ -1,11 +1,13 @@
+ #!/usr/bin/env python3
++import copy
++
+ import tcod
+ 
+ from game.engine import Engine
+ from game.entity import Entity
+ from game.input_handlers import BaseEventHandler, MainGameEventHandler
+ from game.procgen import generate_dungeon
+-import game.game_map
++import game.entity_factories
+ 
+ 
+ def main() -> None:
+@@ -22,7 +24,8 @@ def main() -> None:
+ 
+     tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
+ 
+-    player = Entity(x=0, y=0, char="@", color=(255, 255, 255), name="Player", blocks_movement=True)
++    player = copy.deepcopy(game.entity_factories.player)
++
+     engine = Engine(player=player)
+ 
+     engine.game_map = generate_dungeon(

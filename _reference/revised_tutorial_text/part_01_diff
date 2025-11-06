@@ -1,0 +1,304 @@
+diff --git a/game/__init__.py b/game/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/game/actions.py b/game/actions.py
+new file mode 100644
+index 0000000..2b3495d
+--- /dev/null
++++ b/game/actions.py
+@@ -0,0 +1,50 @@
++from __future__ import annotations
++
++from game.engine import Engine
++from game.entity import Entity
++
++
++class Action:
++    def __init__(self, entity: Entity) -> None:
++        super().__init__()
++        self.entity = entity
++
++    @property
++    def engine(self) -> Engine:
++        """Return the engine this action belongs to."""
++        # In Part 1, we don't have gamemap yet, so we'll need a different approach
++        # This will be refactored in Part 2 when we add GameMap
++        raise NotImplementedError()
++
++    def perform(self, engine: Engine) -> None:
++        """Perform this action with the objects needed to determine its scope.
++
++        This method must be overridden by Action subclasses.
++        """
++        raise NotImplementedError()
++
++
++class EscapeAction(Action):
++    def perform(self, engine: Engine) -> None:
++        raise SystemExit()
++
++
++class ActionWithDirection(Action):
++    def __init__(self, entity: Entity, dx: int, dy: int):
++        super().__init__(entity)
++
++        self.dx = dx
++        self.dy = dy
++
++    def perform(self, engine: Engine) -> None:
++        raise NotImplementedError()
++
++
++class MovementAction(ActionWithDirection):
++    def perform(self, engine: Engine) -> None:
++        dest_x = self.entity.x + self.dx
++        dest_y = self.entity.y + self.dy
++
++        # Check boundaries (hardcoded for Part 1, will be improved later)
++        if 0 <= dest_x < 80 and 0 <= dest_y < 50:
++            self.entity.move(self.dx, self.dy)
+diff --git a/game/engine.py b/game/engine.py
+new file mode 100644
+index 0000000..93d0c4e
+--- /dev/null
++++ b/game/engine.py
+@@ -0,0 +1,13 @@
++from __future__ import annotations
++
++import tcod
++
++from game.entity import Entity
++
++
++class Engine:
++    def __init__(self, player: Entity):
++        self.player = player
++
++    def render(self, console: tcod.console.Console) -> None:
++        console.print(x=self.player.x, y=self.player.y, string=self.player.char, fg=self.player.color)
+diff --git a/game/entity.py b/game/entity.py
+new file mode 100644
+index 0000000..c9d278c
+--- /dev/null
++++ b/game/entity.py
+@@ -0,0 +1,18 @@
++from typing import Tuple
++
++
++class Entity:
++    """
++    A generic object to represent players, enemies, items, etc.
++    """
++
++    def __init__(self, x: int, y: int, char: str, color: Tuple[int, int, int]):
++        self.x = x
++        self.y = y
++        self.char = char
++        self.color = color
++
++    def move(self, dx: int, dy: int) -> None:
++        # Move the entity by a given amount
++        self.x += dx
++        self.y += dy
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+new file mode 100644
+index 0000000..01553b0
+--- /dev/null
++++ b/game/input_handlers.py
+@@ -0,0 +1,115 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, Optional, Union
++
++import tcod.event
++
++from game.actions import Action, EscapeAction, MovementAction
++
++if TYPE_CHECKING:
++    import game.engine
++
++# Part 10 refactoring: ActionOrHandler type
++ActionOrHandler = Union[Action, "BaseEventHandler"]
++"""An event handler return value which can trigger an action or switch active handlers.
++
++If a handler is returned then it will become the active handler for future events.
++If an action is returned it will be attempted and if it's valid then
++MainGameEventHandler will become the active handler.
++"""
++
++
++MOVE_KEYS = {
++    # Arrow keys.
++    tcod.event.KeySym.UP: (0, -1),
++    tcod.event.KeySym.DOWN: (0, 1),
++    tcod.event.KeySym.LEFT: (-1, 0),
++    tcod.event.KeySym.RIGHT: (1, 0),
++    tcod.event.KeySym.HOME: (-1, -1),
++    tcod.event.KeySym.END: (-1, 1),
++    tcod.event.KeySym.PAGEUP: (1, -1),
++    tcod.event.KeySym.PAGEDOWN: (1, 1),
++    # Numpad keys.
++    tcod.event.KeySym.KP_1: (-1, 1),
++    tcod.event.KeySym.KP_2: (0, 1),
++    tcod.event.KeySym.KP_3: (1, 1),
++    tcod.event.KeySym.KP_4: (-1, 0),
++    tcod.event.KeySym.KP_6: (1, 0),
++    tcod.event.KeySym.KP_7: (-1, -1),
++    tcod.event.KeySym.KP_8: (0, -1),
++    tcod.event.KeySym.KP_9: (1, -1),
++    # Vi keys.
++    tcod.event.KeySym.H: (-1, 0),
++    tcod.event.KeySym.J: (0, 1),
++    tcod.event.KeySym.K: (0, -1),
++    tcod.event.KeySym.L: (1, 0),
++    tcod.event.KeySym.Y: (-1, -1),
++    tcod.event.KeySym.U: (1, -1),
++    tcod.event.KeySym.B: (-1, 1),
++    tcod.event.KeySym.N: (1, 1),
++}
++
++
++# Part 10 refactoring: BaseEventHandler
++class BaseEventHandler(tcod.event.EventDispatch[ActionOrHandler]):
++    def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
++        """Handle an event and return the next active event handler."""
++        state = self.dispatch(event)
++        if isinstance(state, BaseEventHandler):
++            return state
++        assert not isinstance(state, Action), f"{self!r} can not handle actions."
++        return self
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        raise NotImplementedError()
++
++    def ev_quit(self, event: tcod.event.Quit) -> Optional[Action]:
++        raise SystemExit()
++
++
++class EventHandler(BaseEventHandler):
++    def __init__(self, engine: game.engine.Engine):
++        self.engine = engine
++
++    def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
++        """Handle events for input handlers with an engine."""
++        action_or_state = self.dispatch(event)
++        if isinstance(action_or_state, BaseEventHandler):
++            return action_or_state
++        if self.handle_action(action_or_state):
++            # A valid action was performed.
++            return MainGameEventHandler(self.engine)  # Return to the main handler.
++        return self
++
++    def handle_action(self, action: Optional[Action]) -> bool:
++        """Handle actions returned from event methods.
++
++        Returns True if the action will advance a turn.
++        """
++        if action is None:
++            return False
++
++        action.perform(self.engine)
++        return True
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        self.engine.render(console)
++
++
++class MainGameEventHandler(EventHandler):
++    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
++        action: Optional[Action] = None
++
++        key = event.sym
++
++        player = self.engine.player
++
++        if key in MOVE_KEYS:
++            dx, dy = MOVE_KEYS[key]
++            action = MovementAction(player, dx, dy)
++
++        elif key == tcod.event.KeySym.ESCAPE:
++            action = EscapeAction(player)
++
++        # No valid key was pressed
++        return action
+diff --git a/main.py b/main.py
+index 1c5a323..6b7173e 100755
+--- a/main.py
++++ b/main.py
+@@ -1,19 +1,9 @@
+ #!/usr/bin/env python3
+-import traceback
+-
+ import tcod
+ 
+-import color
+-import exceptions
+-import input_handlers
+-import setup_game
+-
+-
+-def save_game(handler: input_handlers.BaseEventHandler, filename: str) -> None:
+-    """If the current event handler has an active Engine then save it."""
+-    if isinstance(handler, input_handlers.EventHandler):
+-        handler.engine.save_as(filename)
+-        print("Game saved.")
++from game.engine import Engine
++from game.entity import Entity
++from game.input_handlers import BaseEventHandler, MainGameEventHandler
+ 
+ 
+ def main() -> None:
+@@ -22,7 +12,12 @@ def main() -> None:
+ 
+     tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
+ 
+-    handler: input_handlers.BaseEventHandler = setup_game.MainMenu()
++    player = Entity(x=int(screen_width / 2), y=int(screen_height / 2), char="@", color=(255, 255, 255))
++
++    engine = Engine(player=player)
++
++    # Part 10 refactoring: Track handler in main loop
++    handler: BaseEventHandler = MainGameEventHandler(engine)
+ 
+     with tcod.context.new(
+         columns=screen_width,
+@@ -31,30 +26,15 @@ def main() -> None:
+         title="Yet Another Roguelike Tutorial",
+         vsync=True,
+     ) as context:
+-        root_console = tcod.Console(screen_width, screen_height, order="F")
+-        try:
+-            while True:
+-                root_console.clear()
+-                handler.on_render(console=root_console)
+-                context.present(root_console)
+-
+-                try:
+-                    for event in tcod.event.wait():
+-                        context.convert_event(event)
+-                        handler = handler.handle_events(event)
+-                except Exception:  # Handle exceptions in game.
+-                    traceback.print_exc()  # Print error to stderr.
+-                    # Then print the error to the message log.
+-                    if isinstance(handler, input_handlers.EventHandler):
+-                        handler.engine.message_log.add_message(traceback.format_exc(), color.error)
+-        except exceptions.QuitWithoutSaving:
+-            raise
+-        except SystemExit:  # Save and quit.
+-            save_game(handler, "savegame.sav")
+-            raise
+-        except BaseException:  # Save on any other unexpected exception.
+-            save_game(handler, "savegame.sav")
+-            raise
++        root_console = tcod.console.Console(screen_width, screen_height, order="F")
++        while True:
++            root_console.clear()
++            handler.on_render(console=root_console)
++            context.present(root_console)
++
++            for event in tcod.event.wait():
++                event = context.convert_event(event)
++                handler = handler.handle_events(event)
+ 
+ 
+ if __name__ == "__main__":
