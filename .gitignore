@@ -1,2 +1,5 @@
 tcod_tutorial_fixes
 tcod_tutorial_revision/
+public/
+resources/_gen/
+.hugo_build.lock

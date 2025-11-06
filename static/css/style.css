@@ -1,0 +1,56 @@
+/* Code block styling */
+pre {
+    border: 1px solid black;
+    padding: 15px;
+    background-color: #272822;
+    color: #f8f8f2;
+}
+
+/* Language-specific styling */
+.language-diff, .language-py3 {
+    background-color: #272822 !important;
+}
+
+/* Diff styling - deletions with strikethrough */
+.crossed-out-text {
+    text-decoration: line-through;
+    color: #f92672;
+}
+
+/* Diff styling - additions in green */
+.new-text {
+    color: #a6e22e;
+}
+
+/* Tab pane visibility control */
+.data-pane {
+    display: none;
+}
+
+.data-pane.active {
+    display: inline;
+}
+
+/* Button styling for tabs */
+.data-toggle-tab {
+    cursor: pointer;
+    padding: 8px 16px;
+    margin-right: 5px;
+    border: 1px solid #ccc;
+    background-color: #f8f8f8;
+    border-radius: 4px;
+}
+
+.data-toggle-tab.active {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+.data-toggle-tab:hover {
+    background-color: #e0e0e0;
+}
+
+.data-toggle-tab.active:hover {
+    background-color: #0056b3;
+}
