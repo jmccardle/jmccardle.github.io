@@ -1,0 +1,493 @@
+diff --git a/game/actions.py b/game/actions.py
+index e6fffd7..9e9132f 100644
+--- a/game/actions.py
++++ b/game/actions.py
+@@ -185,3 +185,15 @@ def perform(self) -> None:
+             self.engine.message_log.add_message("You descend the staircase.", descend)
+         else:
+             raise game.exceptions.Impossible("There are no stairs here.")
++
++
++class EquipAction(Action):
++    def __init__(self, entity: game.entity.Actor, item: game.entity.Item):
++        super().__init__(entity)
++
++        self.item = item
++
++    def perform(self) -> None:
++        # Type check to ensure entity is an Actor with equipment
++        assert isinstance(self.entity, game.entity.Actor), "Entity must be an Actor for equipment access"
++        self.entity.equipment.toggle_equip(self.item)
+diff --git a/game/components/equipment.py b/game/components/equipment.py
+new file mode 100644
+index 0000000..12ffc00
+--- /dev/null
++++ b/game/components/equipment.py
+@@ -0,0 +1,83 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, Optional
++
++import game.components.base_component
++import game.equipment_types
++
++if TYPE_CHECKING:
++    import game.entity
++
++
++class Equipment(game.components.base_component.BaseComponent):
++    parent: game.entity.Actor
++
++    def __init__(self, weapon: Optional[game.entity.Item] = None, armor: Optional[game.entity.Item] = None):
++        self.weapon = weapon
++        self.armor = armor
++
++    @property
++    def defense_bonus(self) -> int:
++        bonus = 0
++
++        if self.weapon is not None and self.weapon.equippable is not None:
++            bonus += self.weapon.equippable.defense_bonus
++
++        if self.armor is not None and self.armor.equippable is not None:
++            bonus += self.armor.equippable.defense_bonus
++
++        return bonus
++
++    @property
++    def power_bonus(self) -> int:
++        bonus = 0
++
++        if self.weapon is not None and self.weapon.equippable is not None:
++            bonus += self.weapon.equippable.power_bonus
++
++        if self.armor is not None and self.armor.equippable is not None:
++            bonus += self.armor.equippable.power_bonus
++
++        return bonus
++
++    def item_is_equipped(self, item: game.entity.Item) -> bool:
++        return self.weapon == item or self.armor == item
++
++    def unequip_message(self, item_name: str) -> None:
++        self.parent.parent.engine.message_log.add_message(f"You remove the {item_name}.")
++
++    def equip_message(self, item_name: str) -> None:
++        self.parent.parent.engine.message_log.add_message(f"You equip the {item_name}.")
++
++    def equip_to_slot(self, slot: str, item: game.entity.Item, add_message: bool) -> None:
++        current_item = getattr(self, slot)
++
++        if current_item is not None:
++            self.unequip_from_slot(slot, add_message)
++
++        setattr(self, slot, item)
++
++        if add_message:
++            self.equip_message(item.name)
++
++    def unequip_from_slot(self, slot: str, add_message: bool) -> None:
++        current_item = getattr(self, slot)
++
++        if add_message:
++            self.unequip_message(current_item.name)
++
++        setattr(self, slot, None)
++
++    def toggle_equip(self, equippable_item: game.entity.Item, add_message: bool = True) -> None:
++        if (
++            equippable_item.equippable
++            and equippable_item.equippable.equipment_type == game.equipment_types.EquipmentType.WEAPON
++        ):
++            slot = "weapon"
++        else:
++            slot = "armor"
++
++        if getattr(self, slot) == equippable_item:
++            self.unequip_from_slot(slot, add_message)
++        else:
++            self.equip_to_slot(slot, equippable_item, add_message)
+diff --git a/game/components/equippable.py b/game/components/equippable.py
+new file mode 100644
+index 0000000..75b4680
+--- /dev/null
++++ b/game/components/equippable.py
+@@ -0,0 +1,44 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
++import game.components.base_component
++import game.equipment_types
++
++if TYPE_CHECKING:
++    import game.entity
++
++
++class Equippable(game.components.base_component.BaseComponent):
++    parent: game.entity.Item
++
++    def __init__(
++        self,
++        equipment_type: game.equipment_types.EquipmentType,
++        power_bonus: int = 0,
++        defense_bonus: int = 0,
++    ):
++        self.equipment_type = equipment_type
++
++        self.power_bonus = power_bonus
++        self.defense_bonus = defense_bonus
++
++
++class Dagger(Equippable):
++    def __init__(self) -> None:
++        super().__init__(equipment_type=game.equipment_types.EquipmentType.WEAPON, power_bonus=2)
++
++
++class Sword(Equippable):
++    def __init__(self) -> None:
++        super().__init__(equipment_type=game.equipment_types.EquipmentType.WEAPON, power_bonus=4)
++
++
++class LeatherArmor(Equippable):
++    def __init__(self) -> None:
++        super().__init__(equipment_type=game.equipment_types.EquipmentType.ARMOR, defense_bonus=1)
++
++
++class ChainMail(Equippable):
++    def __init__(self) -> None:
++        super().__init__(equipment_type=game.equipment_types.EquipmentType.ARMOR, defense_bonus=3)
+diff --git a/game/components/fighter.py b/game/components/fighter.py
+index 2ecc945..2380847 100644
+--- a/game/components/fighter.py
++++ b/game/components/fighter.py
+@@ -14,11 +14,11 @@
+ class Fighter(BaseComponent):
+     parent: game.entity.Actor
+ 
+-    def __init__(self, hp: int, defense: int, power: int):
++    def __init__(self, hp: int, base_defense: int, base_power: int):
+         self.max_hp = hp
+         self._hp = hp
+-        self.defense = defense
+-        self.power = power
++        self.base_defense = base_defense
++        self.base_power = base_power
+ 
+     @property
+     def hp(self) -> int:
+@@ -30,6 +30,28 @@ def hp(self, value: int) -> None:
+         if self._hp == 0 and self.parent.ai:
+             self.die()
+ 
++    @property
++    def defense(self) -> int:
++        return self.base_defense + self.defense_bonus
++
++    @property
++    def power(self) -> int:
++        return self.base_power + self.power_bonus
++
++    @property
++    def defense_bonus(self) -> int:
++        if self.parent.equipment:
++            return self.parent.equipment.defense_bonus
++        else:
++            return 0
++
++    @property
++    def power_bonus(self) -> int:
++        if self.parent.equipment:
++            return self.parent.equipment.power_bonus
++        else:
++            return 0
++
+     def die(self) -> None:
+         if self.engine.player is self.parent:
+             death_message = "You died!"
+diff --git a/game/components/level.py b/game/components/level.py
+index ad6aadc..8151a5e 100644
+--- a/game/components/level.py
++++ b/game/components/level.py
+@@ -54,14 +54,14 @@ def increase_max_hp(self, amount: int = 20) -> None:
+         self.increase_level()
+ 
+     def increase_power(self, amount: int = 1) -> None:
+-        self.parent.fighter.power += amount
++        self.parent.fighter.base_power += amount
+ 
+         self.engine.message_log.add_message("You feel stronger!")
+ 
+         self.increase_level()
+ 
+     def increase_defense(self, amount: int = 1) -> None:
+-        self.parent.fighter.defense += amount
++        self.parent.fighter.base_defense += amount
+ 
+         self.engine.message_log.add_message("Your movements are getting swifter!")
+ 
+diff --git a/game/entity.py b/game/entity.py
+index 36c96d9..5530cf0 100644
+--- a/game/entity.py
++++ b/game/entity.py
+@@ -8,6 +8,8 @@
+ if TYPE_CHECKING:
+     import game.components.ai
+     import game.components.consumable
++    import game.components.equipment
++    import game.components.equippable
+     import game.components.fighter
+     import game.components.inventory
+     import game.components.level
+@@ -84,6 +86,7 @@ def __init__(
+         color: Tuple[int, int, int] = (255, 255, 255),
+         name: str = "<Unnamed>",
+         ai_cls: Type[game.components.ai.BaseAI],
++        equipment: game.components.equipment.Equipment,
+         fighter: game.components.fighter.Fighter,
+         inventory: game.components.inventory.Inventory,
+         level: game.components.level.Level,
+@@ -100,6 +103,9 @@ def __init__(
+ 
+         self.ai: Optional[game.components.ai.BaseAI] = ai_cls(self) if ai_cls else None
+ 
++        self.equipment = equipment
++        self.equipment.parent = self
++
+         self.fighter = fighter
+         self.fighter.parent = self
+ 
+@@ -127,6 +133,7 @@ def __init__(
+         color: Tuple[int, int, int] = (255, 255, 255),
+         name: str = "<Unnamed>",
+         consumable: Optional[game.components.consumable.Consumable] = None,
++        equippable: Optional[game.components.equippable.Equippable] = None,
+     ):
+         super().__init__(
+             parent=None,
+@@ -139,8 +146,11 @@ def __init__(
+         )
+ 
+         self.consumable = consumable
+-
+         if self.consumable:
+             self.consumable.parent = self
+ 
++        self.equippable = equippable
++        if self.equippable:
++            self.equippable.parent = self
++
+         self.render_order = RenderOrder.ITEM
+diff --git a/game/entity_factories.py b/game/entity_factories.py
+index 0f58660..41fd98c 100644
+--- a/game/entity_factories.py
++++ b/game/entity_factories.py
+@@ -5,6 +5,8 @@
+     HealingConsumable,
+     LightningDamageConsumable,
+ )
++from game.components.equipment import Equipment
++from game.components.equippable import ChainMail, Dagger, LeatherArmor, Sword
+ from game.components.fighter import Fighter
+ from game.components.inventory import Inventory
+ from game.components.level import Level
+@@ -15,7 +17,8 @@
+     color=(255, 255, 255),
+     name="Player",
+     ai_cls=HostileEnemy,
+-    fighter=Fighter(hp=30, defense=2, power=5),
++    equipment=Equipment(),
++    fighter=Fighter(hp=30, base_defense=2, base_power=5),
+     inventory=Inventory(capacity=26),
+     level=Level(level_up_base=200),
+ )
+@@ -25,7 +28,8 @@
+     color=(63, 127, 63),
+     name="Orc",
+     ai_cls=HostileEnemy,
+-    fighter=Fighter(hp=10, defense=0, power=3),
++    equipment=Equipment(),
++    fighter=Fighter(hp=10, base_defense=0, base_power=3),
+     inventory=Inventory(capacity=0),
+     level=Level(xp_given=35),
+ )
+@@ -35,7 +39,8 @@
+     color=(0, 127, 0),
+     name="Troll",
+     ai_cls=HostileEnemy,
+-    fighter=Fighter(hp=16, defense=1, power=4),
++    equipment=Equipment(),
++    fighter=Fighter(hp=16, base_defense=1, base_power=4),
+     inventory=Inventory(capacity=0),
+     level=Level(xp_given=100),
+ )
+@@ -67,3 +72,31 @@
+     name="Fireball Scroll",
+     consumable=FireballDamageConsumable(damage=12, radius=3),
+ )
++
++dagger = Item(
++    char="/",
++    color=(0, 191, 255),
++    name="Dagger",
++    equippable=Dagger(),
++)
++
++sword = Item(
++    char="/",
++    color=(0, 191, 255),
++    name="Sword",
++    equippable=Sword(),
++)
++
++leather_armor = Item(
++    char="[",
++    color=(139, 69, 19),
++    name="Leather Armor",
++    equippable=LeatherArmor(),
++)
++
++chain_mail = Item(
++    char="[",
++    color=(139, 69, 19),
++    name="Chain Mail",
++    equippable=ChainMail(),
++)
+diff --git a/game/equipment_types.py b/game/equipment_types.py
+new file mode 100644
+index 0000000..f81aeaf
+--- /dev/null
++++ b/game/equipment_types.py
+@@ -0,0 +1,6 @@
++from enum import Enum, auto
++
++
++class EquipmentType(Enum):
++    WEAPON = auto()
++    ARMOR = auto()
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index 9c6689d..0a1bbd8 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -144,6 +144,8 @@ def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+             return InventoryActivateHandler(self.engine)
+         elif key == tcod.event.KeySym.D:
+             return InventoryDropHandler(self.engine)
++        elif key == tcod.event.KeySym.C:
++            return CharacterScreenEventHandler(self.engine)
+         elif key == tcod.event.KeySym.SLASH:
+             return LookHandler(self.engine)
+         elif key == tcod.event.KeySym.PERIOD:
+@@ -237,6 +239,44 @@ def on_exit(self) -> Optional[ActionOrHandler]:
+         return MainGameEventHandler(self.engine)
+ 
+ 
++class CharacterScreenEventHandler(AskUserEventHandler):
++    TITLE = "Character Information"
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        super().on_render(console)
++
++        if self.engine.player.x <= 30:
++            x = 40
++        else:
++            x = 0
++
++        y = 0
++
++        width = len(self.TITLE) + 4
++
++        console.draw_frame(
++            x=x,
++            y=y,
++            width=width,
++            height=7,
++            title=self.TITLE,
++            clear=True,
++            fg=(255, 255, 255),
++            bg=(0, 0, 0),
++        )
++
++        console.print(x=x + 1, y=y + 1, string=f"Level: {self.engine.player.level.current_level}")
++        console.print(x=x + 1, y=y + 2, string=f"XP: {self.engine.player.level.current_xp}")
++        console.print(
++            x=x + 1,
++            y=y + 3,
++            string=f"XP for next Level: {self.engine.player.level.experience_to_next_level}",
++        )
++
++        console.print(x=x + 1, y=y + 4, string=f"Attack: {self.engine.player.fighter.power}")
++        console.print(x=x + 1, y=y + 5, string=f"Defense: {self.engine.player.fighter.defense}")
++
++
+ class InventoryEventHandler(AskUserEventHandler):
+     """This handler lets the user select an item.
+ 
+@@ -281,7 +321,15 @@ def on_render(self, console: tcod.console.Console) -> None:
+         if number_of_items_in_inventory > 0:
+             for i, item in enumerate(self.engine.player.inventory.items):
+                 item_key = chr(ord("a") + i)
+-                console.print(x + 1, y + i + 1, f"({item_key}) {item.name}")
++
++                is_equipped = self.engine.player.equipment.item_is_equipped(item)
++
++                item_string = f"({item_key}) {item.name}"
++
++                if is_equipped:
++                    item_string = f"{item_string} (E)"
++
++                console.print(x + 1, y + i + 1, item_string)
+         else:
+             console.print(x + 1, y + 1, "(Empty)")
+ 
+@@ -311,8 +359,11 @@ class InventoryActivateHandler(InventoryEventHandler):
+ 
+     def on_item_selected(self, item: game.entity.Item) -> Optional[ActionOrHandler]:
+         """Return the action for the selected item."""
+-        if item.consumable is not None:
++        if item.consumable:
++            # Try to return the action for this item.
+             return item.consumable.get_action(self.engine.player)
++        elif item.equippable:
++            return game.actions.EquipAction(self.engine.player, item)
+         else:
+             self.engine.message_log.add_message("This item cannot be used.", game.color.invalid)
+             return None
+diff --git a/game/procgen.py b/game/procgen.py
+index 938688b..b99de4d 100644
+--- a/game/procgen.py
++++ b/game/procgen.py
+@@ -29,8 +29,8 @@
+ item_chances: Dict[int, List[Tuple[game.entity.Entity, int]]] = {
+     0: [(game.entity_factories.health_potion, 35)],
+     2: [(game.entity_factories.confusion_scroll, 10)],
+-    4: [(game.entity_factories.lightning_scroll, 25)],
+-    6: [(game.entity_factories.fireball_scroll, 25)],
++    4: [(game.entity_factories.lightning_scroll, 25), (game.entity_factories.sword, 5)],
++    6: [(game.entity_factories.fireball_scroll, 25), (game.entity_factories.chain_mail, 15)],
+ }
+ 
+ enemy_chances: Dict[int, List[Tuple[game.entity.Entity, int]]] = {
+diff --git a/game/setup_game.py b/game/setup_game.py
+index 0d3ef7d..5560d0c 100644
+--- a/game/setup_game.py
++++ b/game/setup_game.py
+@@ -41,6 +41,18 @@ def new_game() -> game.engine.Engine:
+ 
+     engine = game.engine.Engine(player=player)
+ 
++    dagger = copy.deepcopy(game.entity_factories.dagger)
++    leather_armor = copy.deepcopy(game.entity_factories.leather_armor)
++
++    dagger.parent = player.inventory
++    leather_armor.parent = player.inventory
++
++    player.inventory.items.append(dagger)
++    player.equipment.toggle_equip(dagger, add_message=False)
++
++    player.inventory.items.append(leather_armor)
++    player.equipment.toggle_equip(leather_armor, add_message=False)
++
+     engine.game_world = game.game_map.GameWorld(
+         engine=engine,
+         max_rooms=max_rooms,

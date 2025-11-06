@@ -1,0 +1,422 @@
+diff --git a/game/color.py b/game/color.py
+index eca1901..d5189d5 100644
+--- a/game/color.py
++++ b/game/color.py
+@@ -12,6 +12,11 @@
+ welcome_text = (0x20, 0xA0, 0xFF)
+ health_recovered = (0x0, 0xFF, 0x0)
+ 
++needs_target = (0x3F, 0xFF, 0xFF)
++status_effect_applied = (0x3F, 0xFF, 0x3F)
++
+ bar_text = white
+ bar_filled = (0x0, 0x60, 0x0)
+ bar_empty = (0x40, 0x10, 0x10)
++
++red = (0xFF, 0x00, 0x00)
+diff --git a/game/components/ai.py b/game/components/ai.py
+index 6c2c536..e039612 100644
+--- a/game/components/ai.py
++++ b/game/components/ai.py
+@@ -1,11 +1,12 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING, List, Tuple
++from typing import TYPE_CHECKING, List, Optional, Tuple
++import random
+ 
+ import numpy as np
+ import tcod
+ 
+-from game.actions import Action, MeleeAction, MovementAction
++from game.actions import Action, BumpAction, MeleeAction, MovementAction
+ 
+ if TYPE_CHECKING:
+     import game.entity
+@@ -73,3 +74,46 @@ def perform(self) -> None:
+                 dest_x - self.entity.x,
+                 dest_y - self.entity.y,
+             ).perform()
++
++
++class ConfusedEnemy(BaseAI):
++    """
++    A confused enemy will stumble around aimlessly for a given number of turns, then revert back to its previous AI.
++    If an actor occupies a tile it is randomly moving into, it will attack.
++    """
++
++    def __init__(self, entity: game.entity.Actor, previous_ai: Optional[BaseAI], turns_remaining: int):
++        super().__init__(entity)
++
++        self.previous_ai = previous_ai
++        self.turns_remaining = turns_remaining
++
++    def perform(self) -> None:
++        # Revert the AI back to the original state if the effect has run its course.
++        if self.turns_remaining <= 0:
++            self.engine.message_log.add_message(f"The {self.entity.name} is no longer confused.")
++            self.entity.ai = self.previous_ai
++        else:
++            # Pick a random direction
++            direction_x, direction_y = random.choice(
++                [
++                    (-1, -1),  # Northwest
++                    (0, -1),  # North
++                    (1, -1),  # Northeast
++                    (-1, 0),  # West
++                    (1, 0),  # East
++                    (-1, 1),  # Southwest
++                    (0, 1),  # South
++                    (1, 1),  # Southeast
++                ]
++            )
++
++            self.turns_remaining -= 1
++
++            # The actor will either try to move or attack in the chosen random direction.
++            # It's possible the actor will just bump into the wall, wasting a turn.
++            return BumpAction(
++                self.entity,
++                direction_x,
++                direction_y,
++            ).perform()
+diff --git a/game/components/consumable.py b/game/components/consumable.py
+index 2c87a0b..cb7071b 100644
+--- a/game/components/consumable.py
++++ b/game/components/consumable.py
+@@ -4,15 +4,21 @@
+ 
+ from game.actions import Action, ItemAction
+ from game.color import health_recovered
++from game.components.ai import ConfusedEnemy
+ from game.components.base_component import BaseComponent
++from game.components.inventory import Inventory
++from game.entity import Actor, Item
+ from game.exceptions import Impossible
+-import game.entity
++from game.input_handlers import ActionOrHandler, AreaRangedAttackHandler, SingleRangedAttackHandler
++
++if TYPE_CHECKING:
++    import game.actions
+ 
+ 
+ class Consumable(BaseComponent):
+-    parent: game.entity.Item
++    parent: Item
+ 
+-    def get_action(self, consumer: game.entity.Actor) -> Optional[Action]:
++    def get_action(self, consumer: Actor) -> Optional[Action]:
+         """Try to return the action for this item."""
+         return ItemAction(consumer, self.parent)
+ 
+@@ -27,7 +33,7 @@ def consume(self) -> None:
+         """Remove the consumed item from its containing inventory."""
+         entity = self.parent
+         inventory = entity.parent
+-        if isinstance(inventory, game.components.inventory.Inventory):
++        if isinstance(inventory, Inventory):
+             inventory.items.remove(entity)
+ 
+ 
+@@ -37,7 +43,7 @@ def __init__(self, amount: int):
+ 
+     def activate(self, action: ItemAction) -> None:
+         # Type check to ensure consumer is an Actor
+-        assert isinstance(action.entity, game.entity.Actor), "Consumer must be an Actor"
++        assert isinstance(action.entity, Actor), "Consumer must be an Actor"
+         consumer = action.entity
+         amount_recovered = consumer.fighter.heal(self.amount)
+ 
+@@ -49,3 +55,98 @@ def activate(self, action: ItemAction) -> None:
+             self.consume()
+         else:
+             raise Impossible("Your health is already full.")
++
++
++class LightningDamageConsumable(Consumable):
++    def __init__(self, damage: int, maximum_range: int):
++        self.damage = damage
++        self.maximum_range = maximum_range
++
++    def activate(self, action: game.actions.ItemAction) -> None:
++        consumer = action.entity
++        target = None
++        closest_distance = self.maximum_range + 1.0
++
++        for actor in self.engine.game_map.actors:
++            if actor is not consumer and self.parent.gamemap.visible[actor.x, actor.y]:
++                distance = consumer.distance(actor.x, actor.y)
++
++                if distance < closest_distance:
++                    target = actor
++                    closest_distance = distance
++
++        if target:
++            self.engine.message_log.add_message(
++                f"A lighting bolt strikes the {target.name} with a loud thunder, for {self.damage} damage!"
++            )
++            target.fighter.take_damage(self.damage)
++            self.consume()
++        else:
++            raise game.exceptions.Impossible("No enemy is close enough to strike.")
++
++
++class ConfusionConsumable(Consumable):
++    def __init__(self, number_of_turns: int):
++        self.number_of_turns = number_of_turns
++
++    def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:
++        self.engine.message_log.add_message("Select a target location.", game.color.needs_target)
++        return SingleRangedAttackHandler(
++            self.engine,
++            callback=lambda xy: game.actions.ItemAction(consumer, self.parent, xy),
++        )
++
++    def activate(self, action: game.actions.ItemAction) -> None:
++        consumer = action.entity
++        target = action.target_actor
++
++        if not self.engine.game_map.visible[action.target_xy]:
++            raise game.exceptions.Impossible("You cannot target an area that you cannot see.")
++        if not target:
++            raise game.exceptions.Impossible("You must select an enemy to target.")
++        if target is consumer:
++            raise game.exceptions.Impossible("You cannot confuse yourself!")
++
++        self.engine.message_log.add_message(
++            f"The eyes of the {target.name} look vacant, as it starts to stumble around!",
++            game.color.status_effect_applied,
++        )
++        target.ai = ConfusedEnemy(
++            entity=target,
++            previous_ai=target.ai,
++            turns_remaining=self.number_of_turns,
++        )
++        self.consume()
++
++
++class FireballDamageConsumable(Consumable):
++    def __init__(self, damage: int, radius: int):
++        self.damage = damage
++        self.radius = radius
++
++    def get_action(self, consumer: Actor) -> Optional[ActionOrHandler]:
++        self.engine.message_log.add_message("Select a target location.", game.color.needs_target)
++        return AreaRangedAttackHandler(
++            self.engine,
++            radius=self.radius,
++            callback=lambda xy: game.actions.ItemAction(consumer, self.parent, xy),
++        )
++
++    def activate(self, action: game.actions.ItemAction) -> None:
++        target_xy = action.target_xy
++
++        if not self.engine.game_map.visible[target_xy]:
++            raise game.exceptions.Impossible("You cannot target an area that you cannot see.")
++
++        targets_hit = False
++        for actor in self.engine.game_map.actors:
++            if actor.distance(*target_xy) <= self.radius:
++                self.engine.message_log.add_message(
++                    f"The {actor.name} is engulfed in a fiery explosion, taking {self.damage} damage!"
++                )
++                actor.fighter.take_damage(self.damage)
++                targets_hit = True
++
++        if not targets_hit:
++            raise game.exceptions.Impossible("There are no targets in the radius.")
++        self.consume()
+diff --git a/game/entity.py b/game/entity.py
+index 87408ed..1ffcc11 100644
+--- a/game/entity.py
++++ b/game/entity.py
+@@ -66,6 +66,12 @@ def move(self, dx: int, dy: int) -> None:
+         self.x += dx
+         self.y += dy
+ 
++    def distance(self, x: int, y: int) -> float:
++        """
++        Return the distance between the current entity and the given (x, y) coordinate.
++        """
++        return float(((x - self.x) ** 2 + (y - self.y) ** 2) ** 0.5)
++
+ 
+ class Actor(Entity):
+     def __init__(
+diff --git a/game/entity_factories.py b/game/entity_factories.py
+index e99a45d..0ca9b4f 100644
+--- a/game/entity_factories.py
++++ b/game/entity_factories.py
+@@ -1,5 +1,10 @@
+ from game.components.ai import HostileEnemy
+-from game.components.consumable import HealingConsumable
++from game.components.consumable import (
++    ConfusionConsumable,
++    FireballDamageConsumable,
++    HealingConsumable,
++    LightningDamageConsumable,
++)
+ from game.components.fighter import Fighter
+ from game.components.inventory import Inventory
+ from game.entity import Actor, Item
+@@ -37,3 +42,24 @@
+     name="Health Potion",
+     consumable=HealingConsumable(amount=4),
+ )
++
++lightning_scroll = Item(
++    char="~",
++    color=(255, 255, 0),
++    name="Lightning Scroll",
++    consumable=LightningDamageConsumable(damage=20, maximum_range=5),
++)
++
++confusion_scroll = Item(
++    char="~",
++    color=(207, 63, 255),
++    name="Confusion Scroll",
++    consumable=ConfusionConsumable(number_of_turns=10),
++)
++
++fireball_scroll = Item(
++    char="~",
++    color=(255, 0, 0),
++    name="Fireball Scroll",
++    consumable=FireballDamageConsumable(damage=12, radius=3),
++)
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index 0f43c59..9b8d24e 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -1,12 +1,12 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING, Optional, Union
++from typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
+ 
+ from tcod import libtcodpy
+ import tcod.event
+ 
+ from game.actions import Action, BumpAction, DropItem, EscapeAction, PickupAction, WaitAction
+-from game.color import black, impossible, invalid, white
++from game.color import black, impossible, invalid, red, white
+ from game.entity import Actor
+ from game.exceptions import Impossible
+ 
+@@ -365,7 +365,7 @@ def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+ 
+     def ev_mousebuttondown(self, event: tcod.event.MouseButtonDown) -> Optional[ActionOrHandler]:
+         """Left click confirms a selection."""
+-        x, y = int(event.tile.x), int(event.tile.y)
++        x, y = int(event.position.x), int(event.position.y)
+         if self.engine.game_map.in_bounds(x, y):
+             if event.button == 1:
+                 return self.on_index_selected(x, y)
+@@ -382,3 +382,51 @@ class LookHandler(SelectIndexHandler):
+     def on_index_selected(self, x: int, y: int) -> MainGameEventHandler:
+         """Return to main handler."""
+         return MainGameEventHandler(self.engine)
++
++
++class SingleRangedAttackHandler(SelectIndexHandler):
++    """Handles targeting a single enemy. Only the enemy selected will be affected."""
++
++    def __init__(
++        self, engine: game.engine.Engine, callback: Callable[[Tuple[int, int]], Optional[game.actions.Action]]
++    ):
++        super().__init__(engine)
++
++        self.callback = callback
++
++    def on_index_selected(self, x: int, y: int) -> Optional[game.actions.Action]:
++        return self.callback((x, y))
++
++
++class AreaRangedAttackHandler(SelectIndexHandler):
++    """Handles targeting an area within a given radius. Any entity within the area will be affected."""
++
++    def __init__(
++        self,
++        engine: game.engine.Engine,
++        radius: int,
++        callback: Callable[[Tuple[int, int]], Optional[game.actions.Action]],
++    ):
++        super().__init__(engine)
++
++        self.radius = radius
++        self.callback = callback
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        """Highlight the tile under the cursor."""
++        super().on_render(console)
++
++        x, y = self.engine.mouse_location
++
++        # Draw a rectangle around the targeted area, so the player can see the affected tiles.
++        console.draw_frame(
++            x=x - self.radius - 1,
++            y=y - self.radius - 1,
++            width=self.radius**2,
++            height=self.radius**2,
++            fg=red,
++            clear=False,
++        )
++
++    def on_index_selected(self, x: int, y: int) -> Optional[game.actions.Action]:
++        return self.callback((x, y))
+diff --git a/game/procgen.py b/game/procgen.py
+index 94623b6..cd84b50 100644
+--- a/game/procgen.py
++++ b/game/procgen.py
+@@ -7,7 +7,7 @@
+ import tcod
+ 
+ from game.entity import Entity
+-from game.entity_factories import health_potion, orc, troll
++from game.entity_factories import confusion_scroll, fireball_scroll, health_potion, lightning_scroll, orc, troll
+ from game.game_map import GameMap
+ from game.tiles import floor
+ 
+@@ -83,7 +83,16 @@ def place_entities(
+         y = random.randint(room.y1 + 1, room.y2 - 1)
+ 
+         if not any(entity.x == x and entity.y == y for entity in dungeon.entities):
+-            item = copy.deepcopy(health_potion)
++            item_chance = random.random()
++
++            if item_chance < 0.7:
++                item = copy.deepcopy(health_potion)
++            elif item_chance < 0.8:
++                item = copy.deepcopy(fireball_scroll)
++            elif item_chance < 0.9:
++                item = copy.deepcopy(confusion_scroll)
++            else:
++                item = copy.deepcopy(lightning_scroll)
+ 
+             item.place(x, y, dungeon)
+ 
+diff --git a/main.py b/main.py
+index 7cb1354..24fed29 100755
+--- a/main.py
++++ b/main.py
+@@ -41,7 +41,6 @@ def main() -> None:
+     )
+     engine.update_fov()
+ 
+-    # Part 10 refactoring: Track handler in main loop
+     handler: BaseEventHandler = MainGameEventHandler(engine)
+ 
+     with tcod.context.new(
+@@ -57,11 +56,8 @@ def main() -> None:
+             handler.on_render(console=root_console)
+             context.present(root_console)
+ 
+-            # Part 10 refactoring: Handler manages its own state transitions
+             for event in tcod.event.wait():
+-                # libtcodpy deprecation: convert mouse events
+-                if isinstance(event, tcod.event.MouseMotion):
+-                    event = context.convert_event(event)
++                event = context.convert_event(event)
+                 handler = handler.handle_events(event)
+ 
+ 

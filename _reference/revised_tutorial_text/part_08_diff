@@ -1,0 +1,757 @@
+diff --git a/game/actions.py b/game/actions.py
+index db313d7..21c06b5 100644
+--- a/game/actions.py
++++ b/game/actions.py
+@@ -1,11 +1,13 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING, Optional
++from typing import TYPE_CHECKING, Optional, Tuple
+ 
+ from game.color import enemy_atk, player_atk
+ from game.entity import Actor
++from game.exceptions import Impossible
+ 
+ if TYPE_CHECKING:
++    import game.components.inventory
+     import game.engine
+     import game.entity
+ 
+@@ -114,3 +116,60 @@ def perform(self) -> None:
+             return MeleeAction(self.entity, self.dx, self.dy).perform()
+         else:
+             return MovementAction(self.entity, self.dx, self.dy).perform()
++
++
++class PickupAction(Action):
++    """Pickup an item and add it to the inventory, if there is room for it."""
++
++    def __init__(self, entity: game.entity.Actor):
++        super().__init__(entity)
++
++    def perform(self) -> None:
++        # Type check to ensure entity is an Actor with inventory
++        assert isinstance(self.entity, Actor), "Entity must be an Actor for inventory access"
++
++        actor_location_x = self.entity.x
++        actor_location_y = self.entity.y
++        inventory = self.entity.inventory
++
++        for item in self.engine.game_map.items:
++            if actor_location_x == item.x and actor_location_y == item.y:
++                if len(inventory.items) >= inventory.capacity:
++                    raise Impossible("Your inventory is full.")
++
++                self.engine.game_map.entities.remove(item)
++                item.parent = inventory
++                inventory.items.append(item)
++
++                self.engine.message_log.add_message(f"You picked up the {item.name}!")
++                return
++
++        raise Impossible("There is nothing here to pick up.")
++
++
++class ItemAction(Action):
++    def __init__(self, entity: game.entity.Actor, item: game.entity.Item, target_xy: Optional[Tuple[int, int]] = None):
++        super().__init__(entity)
++        self.item = item
++        if not target_xy:
++            target_xy = entity.x, entity.y
++        self.target_xy = target_xy
++
++    @property
++    def target_actor(self) -> Optional[game.entity.Actor]:
++        """Return the actor at this actions destination."""
++        return self.engine.game_map.get_actor_at_location(*self.target_xy)
++
++    def perform(self) -> None:
++        """Invoke the items ability, this action will be given to provide context."""
++        if self.item.consumable is not None:
++            self.item.consumable.activate(self)
++        else:
++            raise Impossible("This item cannot be used.")
++
++
++class DropItem(ItemAction):
++    def perform(self) -> None:
++        # Type check to ensure entity is an Actor with inventory
++        assert isinstance(self.entity, Actor), "Entity must be an Actor for inventory access"
++        self.entity.inventory.drop(self.item)
+diff --git a/game/color.py b/game/color.py
+index efe5f78..eca1901 100644
+--- a/game/color.py
++++ b/game/color.py
+@@ -6,7 +6,11 @@
+ player_die = (0xFF, 0x30, 0x30)
+ enemy_die = (0xFF, 0xA0, 0x30)
+ 
++impossible = (0x80, 0x80, 0x80)
++invalid = (0xFF, 0xFF, 0x00)
++
+ welcome_text = (0x20, 0xA0, 0xFF)
++health_recovered = (0x0, 0xFF, 0x0)
+ 
+ bar_text = white
+ bar_filled = (0x0, 0x60, 0x0)
+diff --git a/game/components/consumable.py b/game/components/consumable.py
+new file mode 100644
+index 0000000..2c87a0b
+--- /dev/null
++++ b/game/components/consumable.py
+@@ -0,0 +1,51 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, Optional
++
++from game.actions import Action, ItemAction
++from game.color import health_recovered
++from game.components.base_component import BaseComponent
++from game.exceptions import Impossible
++import game.entity
++
++
++class Consumable(BaseComponent):
++    parent: game.entity.Item
++
++    def get_action(self, consumer: game.entity.Actor) -> Optional[Action]:
++        """Try to return the action for this item."""
++        return ItemAction(consumer, self.parent)
++
++    def activate(self, action: ItemAction) -> None:
++        """Invoke this items ability.
++
++        `action` is the context for this activation.
++        """
++        raise NotImplementedError()
++
++    def consume(self) -> None:
++        """Remove the consumed item from its containing inventory."""
++        entity = self.parent
++        inventory = entity.parent
++        if isinstance(inventory, game.components.inventory.Inventory):
++            inventory.items.remove(entity)
++
++
++class HealingConsumable(Consumable):
++    def __init__(self, amount: int):
++        self.amount = amount
++
++    def activate(self, action: ItemAction) -> None:
++        # Type check to ensure consumer is an Actor
++        assert isinstance(action.entity, game.entity.Actor), "Consumer must be an Actor"
++        consumer = action.entity
++        amount_recovered = consumer.fighter.heal(self.amount)
++
++        if amount_recovered > 0:
++            self.engine.message_log.add_message(
++                f"You consume the {self.parent.name}, and recover {amount_recovered} HP!",
++                health_recovered,
++            )
++            self.consume()
++        else:
++            raise Impossible("Your health is already full.")
+diff --git a/game/components/fighter.py b/game/components/fighter.py
+index 92bd711..e568adb 100644
+--- a/game/components/fighter.py
++++ b/game/components/fighter.py
+@@ -48,3 +48,21 @@ def die(self) -> None:
+         self.parent.render_order = RenderOrder.CORPSE
+ 
+         self.engine.message_log.add_message(death_message, death_message_color)
++
++    def heal(self, amount: int) -> int:
++        if self.hp == self.max_hp:
++            return 0
++
++        new_hp_value = self.hp + amount
++
++        if new_hp_value > self.max_hp:
++            new_hp_value = self.max_hp
++
++        amount_recovered = new_hp_value - self.hp
++
++        self.hp = new_hp_value
++
++        return amount_recovered
++
++    def take_damage(self, amount: int) -> None:
++        self.hp -= amount
+diff --git a/game/components/inventory.py b/game/components/inventory.py
+new file mode 100644
+index 0000000..a8e95b2
+--- /dev/null
++++ b/game/components/inventory.py
+@@ -0,0 +1,30 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, List
++
++from game.components.base_component import BaseComponent
++
++if TYPE_CHECKING:
++    import game.entity
++    import game.game_map
++
++
++class Inventory(BaseComponent):
++    parent: game.entity.Actor
++
++    def __init__(self, capacity: int):
++        self.capacity = capacity
++        self.items: List[game.entity.Item] = []
++
++    @property
++    def gamemap(self) -> game.game_map.GameMap:
++        return self.parent.gamemap
++
++    def drop(self, item: game.entity.Item) -> None:
++        """
++        Removes an item from the inventory and restores it to the game map, at the player's current location.
++        """
++        self.items.remove(item)
++        item.place(self.parent.x, self.parent.y, self.gamemap)
++
++        self.engine.message_log.add_message(f"You dropped the {item.name}.")
+diff --git a/game/entity.py b/game/entity.py
+index c4e8cc2..87408ed 100644
+--- a/game/entity.py
++++ b/game/entity.py
+@@ -1,13 +1,16 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING, Optional, Tuple, Type
++from typing import TYPE_CHECKING, Optional, Tuple, Type, Union
+ 
+ from game.render_order import RenderOrder
+ 
+ if TYPE_CHECKING:
+     import game.components.ai
++    import game.components.consumable
+     import game.components.fighter
+-    import game.game_map
++    import game.components.inventory
++
++from game.game_map import GameMap
+ 
+ 
+ class Entity:
+@@ -15,12 +18,11 @@ class Entity:
+     A generic object to represent players, enemies, items, etc.
+     """
+ 
+-    # Part 8 refactoring prep: Will become Union[GameMap, Inventory] in Part 8
+-    gamemap: Optional[game.game_map.GameMap]
++    parent: Union[GameMap, game.components.inventory.Inventory]
+ 
+     def __init__(
+         self,
+-        gamemap: Optional[game.game_map.GameMap] = None,
++        parent: Optional[Union[GameMap, game.components.inventory.Inventory]] = None,
+         x: int = 0,
+         y: int = 0,
+         char: str = "?",
+@@ -35,19 +37,28 @@ def __init__(
+         self.name = name
+         self.blocks_movement = blocks_movement
+         self.render_order = RenderOrder.CORPSE
+-        if gamemap:
+-            # If gamemap isn't provided now then it will be set later.
+-            self.gamemap = gamemap
+-            gamemap.entities.add(self)
++        if parent:
++            # If parent isn't provided now then it will be set later.
++            self.parent = parent
++            if hasattr(parent, "entities"):
++                parent.entities.add(self)
+ 
+-    def place(self, x: int, y: int, gamemap: Optional[game.game_map.GameMap] = None) -> None:
++    @property
++    def gamemap(self) -> GameMap:
++        if isinstance(self.parent, GameMap):
++            return self.parent
++        else:
++            return self.parent.gamemap
++
++    def place(self, x: int, y: int, gamemap: Optional[GameMap] = None) -> None:
+         """Place this entity at a new location. Handles moving across GameMaps."""
+         self.x = x
+         self.y = y
+         if gamemap:
+-            if hasattr(self, "gamemap") and self.gamemap is not None:  # Possibly uninitialized.
+-                self.gamemap.entities.remove(self)
+-            self.gamemap = gamemap
++            if hasattr(self, "parent"):  # Possibly uninitialized.
++                if hasattr(self.parent, "entities"):
++                    self.parent.entities.remove(self)
++            self.parent = gamemap
+             gamemap.entities.add(self)
+ 
+     def move(self, dx: int, dy: int) -> None:
+@@ -67,9 +78,10 @@ def __init__(
+         name: str = "<Unnamed>",
+         ai_cls: Type[game.components.ai.BaseAI],
+         fighter: game.components.fighter.Fighter,
++        inventory: game.components.inventory.Inventory,
+     ):
+         super().__init__(
+-            gamemap=None,
++            parent=None,
+             x=x,
+             y=y,
+             char=char,
+@@ -83,9 +95,41 @@ def __init__(
+         self.fighter = fighter
+         self.fighter.parent = self
+ 
++        self.inventory = inventory
++        self.inventory.parent = self
++
+         self.render_order = RenderOrder.ACTOR
+ 
+     @property
+     def is_alive(self) -> bool:
+         """Returns True as long as this actor can perform actions."""
+         return bool(self.ai)
++
++
++class Item(Entity):
++    def __init__(
++        self,
++        *,
++        x: int = 0,
++        y: int = 0,
++        char: str = "?",
++        color: Tuple[int, int, int] = (255, 255, 255),
++        name: str = "<Unnamed>",
++        consumable: Optional[game.components.consumable.Consumable] = None,
++    ):
++        super().__init__(
++            parent=None,
++            x=x,
++            y=y,
++            char=char,
++            color=color,
++            name=name,
++            blocks_movement=False,
++        )
++
++        self.consumable = consumable
++
++        if self.consumable:
++            self.consumable.parent = self
++
++        self.render_order = RenderOrder.ITEM
+diff --git a/game/entity_factories.py b/game/entity_factories.py
+index 4fc3611..e99a45d 100644
+--- a/game/entity_factories.py
++++ b/game/entity_factories.py
+@@ -1,6 +1,8 @@
+ from game.components.ai import HostileEnemy
++from game.components.consumable import HealingConsumable
+ from game.components.fighter import Fighter
+-from game.entity import Actor
++from game.components.inventory import Inventory
++from game.entity import Actor, Item
+ 
+ player = Actor(
+     char="@",
+@@ -8,6 +10,7 @@
+     name="Player",
+     ai_cls=HostileEnemy,
+     fighter=Fighter(hp=30, defense=2, power=5),
++    inventory=Inventory(capacity=26),
+ )
+ 
+ orc = Actor(
+@@ -16,6 +19,7 @@
+     name="Orc",
+     ai_cls=HostileEnemy,
+     fighter=Fighter(hp=10, defense=0, power=3),
++    inventory=Inventory(capacity=0),
+ )
+ 
+ troll = Actor(
+@@ -24,4 +28,12 @@
+     name="Troll",
+     ai_cls=HostileEnemy,
+     fighter=Fighter(hp=16, defense=1, power=4),
++    inventory=Inventory(capacity=0),
++)
++
++health_potion = Item(
++    char="!",
++    color=(127, 0, 255),
++    name="Health Potion",
++    consumable=HealingConsumable(amount=4),
+ )
+diff --git a/game/exceptions.py b/game/exceptions.py
+new file mode 100644
+index 0000000..64dbc63
+--- /dev/null
++++ b/game/exceptions.py
+@@ -0,0 +1,5 @@
++class Impossible(Exception):
++    """Exception raised when an action is impossible to be performed.
++
++    The reason is given as the exception message.
++    """
+diff --git a/game/game_map.py b/game/game_map.py
+index b292ba3..4b40750 100644
+--- a/game/game_map.py
++++ b/game/game_map.py
+@@ -5,12 +5,11 @@
+ import numpy as np
+ import tcod
+ 
+-from game.entity import Actor
+ from game.tiles import SHROUD, wall
++import game.entity
+ 
+ if TYPE_CHECKING:
+     import game.engine
+-    import game.entity
+ 
+ 
+ class GameMap:
+@@ -31,7 +30,11 @@ def gamemap(self) -> GameMap:
+     @property
+     def actors(self) -> Iterator[game.entity.Actor]:
+         """Iterate over this maps living actors."""
+-        yield from (entity for entity in self.entities if isinstance(entity, Actor) and entity.is_alive)
++        yield from (entity for entity in self.entities if isinstance(entity, game.entity.Actor) and entity.is_alive)
++
++    @property
++    def items(self) -> Iterator[game.entity.Item]:
++        yield from (entity for entity in self.entities if isinstance(entity, game.entity.Item))
+ 
+     def get_blocking_entity_at_location(
+         self,
+@@ -48,6 +51,13 @@ def get_blocking_entity_at(self, x: int, y: int) -> Optional[game.entity.Entity]
+         """Alias for get_blocking_entity_at_location"""
+         return self.get_blocking_entity_at_location(x, y)
+ 
++    def get_actor_at_location(self, x: int, y: int) -> Optional[game.entity.Actor]:
++        for actor in self.actors:
++            if actor.x == x and actor.y == y:
++                return actor
++
++        return None
++
+     def in_bounds(self, x: int, y: int) -> bool:
+         """Return True if x and y are inside of the bounds of this map."""
+         return 0 <= x < self.width and 0 <= y < self.height
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index 082d0cd..0f43c59 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -5,11 +5,14 @@
+ from tcod import libtcodpy
+ import tcod.event
+ 
+-from game.actions import Action, BumpAction, EscapeAction, WaitAction
++from game.actions import Action, BumpAction, DropItem, EscapeAction, PickupAction, WaitAction
++from game.color import black, impossible, invalid, white
+ from game.entity import Actor
++from game.exceptions import Impossible
+ 
+ if TYPE_CHECKING:
+     import game.engine
++    import game.entity
+ 
+ # Part 10 refactoring: ActionOrHandler type
+ ActionOrHandler = Union[Action, "BaseEventHandler"]
+@@ -99,7 +102,11 @@ def handle_action(self, action: Optional[Action]) -> bool:
+         if action is None:
+             return False
+ 
+-        action.perform()
++        try:
++            action.perform()
++        except Impossible as exc:
++            self.engine.message_log.add_message(exc.args[0], impossible)
++            return False  # Skip enemy turn on exceptions.
+ 
+         self.engine.handle_enemy_turns()
+         self.engine.update_fov()  # Update the FOV before the players next action.
+@@ -126,9 +133,17 @@ def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+             dx, dy = MOVE_KEYS[key]
+             action = BumpAction(player, dx, dy)
+         elif key == tcod.event.KeySym.ESCAPE:
+-            action = game.actions.EscapeAction(player)
++            action = EscapeAction(player)
+         elif key == tcod.event.KeySym.V:
+             return HistoryViewer(self.engine)
++        elif key == tcod.event.KeySym.G:
++            action = PickupAction(player)
++        elif key == tcod.event.KeySym.I:
++            return InventoryActivateHandler(self.engine)
++        elif key == tcod.event.KeySym.D:
++            return InventoryDropHandler(self.engine)
++        elif key == tcod.event.KeySym.SLASH:
++            return LookHandler(self.engine)
+         elif key == tcod.event.KeySym.PERIOD and modifiers & (tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT):
+             # Wait if user presses '>' (shift + period)
+             action = WaitAction(player)
+@@ -186,3 +201,184 @@ def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+         else:  # Any other key moves back to the main game state.
+             return MainGameEventHandler(self.engine)
+         return None
++
++
++class AskUserEventHandler(EventHandler):
++    """Handles user input for actions which require special input."""
++
++    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
++        """By default any key exits this input handler."""
++        if event.sym in {  # Ignore modifier keys.
++            tcod.event.KeySym.LSHIFT,
++            tcod.event.KeySym.RSHIFT,
++            tcod.event.KeySym.LCTRL,
++            tcod.event.KeySym.RCTRL,
++            tcod.event.KeySym.LALT,
++            tcod.event.KeySym.RALT,
++        }:
++            return None
++        return self.on_exit()
++
++    def ev_mousebuttondown(self, event: tcod.event.MouseButtonDown) -> Optional[ActionOrHandler]:
++        """By default any mouse click exits this input handler."""
++        return self.on_exit()
++
++    def on_exit(self) -> Optional[ActionOrHandler]:
++        """Called when the user is trying to exit or cancel an action.
++
++        By default this returns to the main event handler.
++        """
++        return MainGameEventHandler(self.engine)
++
++
++class InventoryEventHandler(AskUserEventHandler):
++    """This handler lets the user select an item.
++
++    What happens then depends on the subclass.
++    """
++
++    TITLE = "<missing title>"
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        """Render an inventory menu, which displays the items in the inventory, and the letter to select them.
++        Will move to a different position based on where the player is located, so the player can always see where
++        they are.
++        """
++        super().on_render(console)
++        number_of_items_in_inventory = len(self.engine.player.inventory.items)
++
++        height = number_of_items_in_inventory + 2
++
++        if height <= 3:
++            height = 3
++
++        if self.engine.player.x <= 30:
++            x = 40
++        else:
++            x = 0
++
++        y = 0
++
++        width = len(self.TITLE) + 4
++
++        console.draw_frame(
++            x=x,
++            y=y,
++            width=width,
++            height=height,
++            title=self.TITLE,
++            clear=True,
++            fg=(255, 255, 255),
++            bg=(0, 0, 0),
++        )
++
++        if number_of_items_in_inventory > 0:
++            for i, item in enumerate(self.engine.player.inventory.items):
++                item_key = chr(ord("a") + i)
++                console.print(x + 1, y + i + 1, f"({item_key}) {item.name}")
++        else:
++            console.print(x + 1, y + 1, "(Empty)")
++
++    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
++        player = self.engine.player
++        key = event.sym
++        index = key - tcod.event.KeySym.A
++
++        if 0 <= index <= 26:
++            try:
++                selected_item = player.inventory.items[index]
++            except IndexError:
++                self.engine.message_log.add_message("Invalid entry.", invalid)
++                return None
++            return self.on_item_selected(selected_item)
++        return super().ev_keydown(event)
++
++    def on_item_selected(self, item: game.entity.Item) -> Optional[ActionOrHandler]:
++        """Called when the user selects a valid item."""
++        raise NotImplementedError()
++
++
++class InventoryActivateHandler(InventoryEventHandler):
++    """Handle using an inventory item."""
++
++    TITLE = "Select an item to use"
++
++    def on_item_selected(self, item: game.entity.Item) -> Optional[ActionOrHandler]:
++        """Return the action for the selected item."""
++        if item.consumable is not None:
++            return item.consumable.get_action(self.engine.player)
++        else:
++            self.engine.message_log.add_message("This item cannot be used.", invalid)
++            return None
++
++
++class InventoryDropHandler(InventoryEventHandler):
++    """Handle dropping an inventory item."""
++
++    TITLE = "Select an item to drop"
++
++    def on_item_selected(self, item: game.entity.Item) -> Optional[ActionOrHandler]:
++        """Drop this item."""
++        return DropItem(self.engine.player, item)
++
++
++class SelectIndexHandler(AskUserEventHandler):
++    """Handles asking the user for an index on the map."""
++
++    def __init__(self, engine: game.engine.Engine):
++        """Sets the cursor to the player when this handler is constructed."""
++        super().__init__(engine)
++        player = self.engine.player
++        engine.mouse_location = player.x, player.y
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        """Highlight the tile under the cursor."""
++        super().on_render(console)
++        x, y = self.engine.mouse_location
++        console.rgb["bg"][x, y] = white
++        console.rgb["fg"][x, y] = black
++
++    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
++        """Check for key movement or confirmation keys."""
++        key = event.sym
++        if key in MOVE_KEYS:
++            modifier = 1  # Holding modifier keys will speed up key movement.
++            if event.mod & (tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT):
++                modifier *= 5
++            if event.mod & (tcod.event.KMOD_LCTRL | tcod.event.KMOD_RCTRL):
++                modifier *= 10
++            if event.mod & (tcod.event.KMOD_LALT | tcod.event.KMOD_RALT):
++                modifier *= 20
++
++            x, y = self.engine.mouse_location
++            dx, dy = MOVE_KEYS[key]
++            x += dx * modifier
++            y += dy * modifier
++            # Clamp the cursor index to the map size.
++            x = max(0, min(x, self.engine.game_map.width - 1))
++            y = max(0, min(y, self.engine.game_map.height - 1))
++            self.engine.mouse_location = x, y
++            return None
++        elif key in (tcod.event.KeySym.RETURN, tcod.event.KeySym.KP_ENTER):
++            return self.on_index_selected(*self.engine.mouse_location)
++        return super().ev_keydown(event)
++
++    def ev_mousebuttondown(self, event: tcod.event.MouseButtonDown) -> Optional[ActionOrHandler]:
++        """Left click confirms a selection."""
++        x, y = int(event.tile.x), int(event.tile.y)
++        if self.engine.game_map.in_bounds(x, y):
++            if event.button == 1:
++                return self.on_index_selected(x, y)
++        return super().ev_mousebuttondown(event)
++
++    def on_index_selected(self, x: int, y: int) -> Optional[ActionOrHandler]:
++        """Called when an index is selected."""
++        raise NotImplementedError()
++
++
++class LookHandler(SelectIndexHandler):
++    """Lets the player look around using the keyboard."""
++
++    def on_index_selected(self, x: int, y: int) -> MainGameEventHandler:
++        """Return to main handler."""
++        return MainGameEventHandler(self.engine)
+diff --git a/game/procgen.py b/game/procgen.py
+index 957ec39..94623b6 100644
+--- a/game/procgen.py
++++ b/game/procgen.py
+@@ -7,7 +7,7 @@
+ import tcod
+ 
+ from game.entity import Entity
+-from game.entity_factories import orc, troll
++from game.entity_factories import health_potion, orc, troll
+ from game.game_map import GameMap
+ from game.tiles import floor
+ 
+@@ -61,8 +61,10 @@ def place_entities(
+     room: RectangularRoom,
+     dungeon: game.game_map.GameMap,
+     maximum_monsters: int,
++    maximum_items: int,
+ ) -> None:
+     number_of_monsters = random.randint(0, maximum_monsters)
++    number_of_items = random.randint(0, maximum_items)
+ 
+     for _ in range(number_of_monsters):
+         x = random.randint(room.x1 + 1, room.x2 - 1)
+@@ -76,6 +78,15 @@ def place_entities(
+ 
+             monster.place(x, y, dungeon)
+ 
++    for _ in range(number_of_items):
++        x = random.randint(room.x1 + 1, room.x2 - 1)
++        y = random.randint(room.y1 + 1, room.y2 - 1)
++
++        if not any(entity.x == x and entity.y == y for entity in dungeon.entities):
++            item = copy.deepcopy(health_potion)
++
++            item.place(x, y, dungeon)
++
+ 
+ def generate_dungeon(
+     max_rooms: int,
+@@ -84,6 +95,7 @@ def generate_dungeon(
+     map_width: int,
+     map_height: int,
+     max_monsters_per_room: int,
++    max_items_per_room: int,
+     engine: game.engine.Engine,
+ ) -> game.game_map.GameMap:
+     """Generate a new dungeon map."""
+@@ -118,7 +130,7 @@ def generate_dungeon(
+             for x, y in tunnel_between(rooms[-1].center, new_room.center):
+                 dungeon.tiles[x, y] = floor
+ 
+-        place_entities(new_room, dungeon, max_monsters_per_room)
++        place_entities(new_room, dungeon, max_monsters_per_room, max_items_per_room)
+ 
+         # Finally, append the new room to the list.
+         rooms.append(new_room)
+diff --git a/main.py b/main.py
+index b47de71..7cb1354 100755
+--- a/main.py
++++ b/main.py
+@@ -21,6 +21,7 @@ def main() -> None:
+     room_min_size = 6
+     max_rooms = 30
+     max_monsters_per_room = 2
++    max_items_per_room = 2
+ 
+     tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
+ 
+@@ -35,6 +36,7 @@ def main() -> None:
+         map_width=map_width,
+         map_height=map_height,
+         max_monsters_per_room=max_monsters_per_room,
++        max_items_per_room=max_items_per_room,
+         engine=engine,
+     )
+     engine.update_fov()

@@ -1,0 +1,419 @@
+diff --git a/game/actions.py b/game/actions.py
+index 1e0126e..db313d7 100644
+--- a/game/actions.py
++++ b/game/actions.py
+@@ -2,6 +2,9 @@
+ 
+ from typing import TYPE_CHECKING, Optional
+ 
++from game.color import enemy_atk, player_atk
++from game.entity import Actor
++
+ if TYPE_CHECKING:
+     import game.engine
+     import game.entity
+@@ -73,17 +76,22 @@ def perform(self) -> None:
+             return  # No entity to attack.
+ 
+         # Type checking to ensure both entities are Actors with fighter components
+-        assert isinstance(self.entity, game.entity.Actor), "Attacker must be an Actor"
+-        assert isinstance(target, game.entity.Actor), "Target must be an Actor"
++        assert isinstance(self.entity, Actor), "Attacker must be an Actor"
++        assert isinstance(target, Actor), "Target must be an Actor"
+ 
+         damage = self.entity.fighter.power - target.fighter.defense
+ 
+         attack_desc = f"{self.entity.name.capitalize()} attacks {target.name}"
++        if self.entity is self.engine.player:
++            attack_color = player_atk
++        else:
++            attack_color = enemy_atk
++
+         if damage > 0:
+-            print(f"{attack_desc} for {damage} hit points.")
++            self.engine.message_log.add_message(f"{attack_desc} for {damage} hit points.", attack_color)
+             target.fighter.hp -= damage
+         else:
+-            print(f"{attack_desc} but does no damage.")
++            self.engine.message_log.add_message(f"{attack_desc} but does no damage.", attack_color)
+ 
+ 
+ class MovementAction(ActionWithDirection):
+diff --git a/game/color.py b/game/color.py
+new file mode 100644
+index 0000000..efe5f78
+--- /dev/null
++++ b/game/color.py
+@@ -0,0 +1,13 @@
++white = (0xFF, 0xFF, 0xFF)
++black = (0x0, 0x0, 0x0)
++
++player_atk = (0xE0, 0xE0, 0xE0)
++enemy_atk = (0xFF, 0xC0, 0xC0)
++player_die = (0xFF, 0x30, 0x30)
++enemy_die = (0xFF, 0xA0, 0x30)
++
++welcome_text = (0x20, 0xA0, 0xFF)
++
++bar_text = white
++bar_filled = (0x0, 0x60, 0x0)
++bar_empty = (0x40, 0x10, 0x10)
+diff --git a/game/components/fighter.py b/game/components/fighter.py
+index 8e4e068..92bd711 100644
+--- a/game/components/fighter.py
++++ b/game/components/fighter.py
+@@ -2,6 +2,7 @@
+ 
+ from typing import TYPE_CHECKING
+ 
++from game.color import enemy_die, player_die
+ from game.components.base_component import BaseComponent
+ from game.render_order import RenderOrder
+ import game.input_handlers
+@@ -32,10 +33,12 @@ def hp(self, value: int) -> None:
+     def die(self) -> None:
+         if self.engine.player is self.parent:
+             death_message = "You died!"
++            death_message_color = player_die
+             # Part 10 refactoring: Don't set event_handler here
+             # GameOverEventHandler will be returned in handle_action
+         else:
+             death_message = f"{self.parent.name} is dead!"
++            death_message_color = enemy_die
+ 
+         self.parent.char = "%"
+         self.parent.color = (191, 0, 0)
+@@ -44,4 +47,4 @@ def die(self) -> None:
+         self.parent.name = f"remains of {self.parent.name}"
+         self.parent.render_order = RenderOrder.CORPSE
+ 
+-        print(death_message)
++        self.engine.message_log.add_message(death_message, death_message_color)
+diff --git a/game/engine.py b/game/engine.py
+index be789d4..b32396a 100644
+--- a/game/engine.py
++++ b/game/engine.py
+@@ -4,7 +4,10 @@
+ 
+ import tcod
+ 
++from game.color import welcome_text
+ from game.entity import Actor
++from game.message_log import MessageLog
++from game.render_functions import render_bar, render_names_at_mouse_location
+ 
+ if TYPE_CHECKING:
+     import game.game_map
+@@ -13,8 +16,11 @@
+ class Engine:
+     game_map: game.game_map.GameMap
+ 
+-    def __init__(self, player: game.entity.Actor):
++    def __init__(self, player: Actor):
+         self.player = player
++        self.mouse_location = (0, 0)
++        self.message_log = MessageLog()
++        self.message_log.add_message("Hello and welcome, adventurer, to yet another dungeon!", welcome_text)
+ 
+     def update_fov(self) -> None:
+         """Recompute the visible area based on the players point of view."""
+@@ -27,9 +33,22 @@ def update_fov(self) -> None:
+         self.game_map.explored |= self.game_map.visible
+ 
+     def handle_enemy_turns(self) -> None:
+-        for entity in set(self.game_map.actors) - {self.player}:
++        for entity in self.game_map.actors:
++            if entity is self.player:
++                continue
+             if entity.ai:
+                 entity.ai.perform()
+ 
+     def render(self, console: tcod.console.Console) -> None:
+         self.game_map.render(console)
++
++        self.message_log.render(console=console, x=21, y=45, width=40, height=5)
++
++        render_bar(
++            console=console,
++            current_value=self.player.fighter.hp,
++            maximum_value=self.player.fighter.max_hp,
++            total_width=20,
++        )
++
++        render_names_at_mouse_location(console=console, x=21, y=44, engine=self)
+diff --git a/game/game_map.py b/game/game_map.py
+index 515c9d7..b292ba3 100644
+--- a/game/game_map.py
++++ b/game/game_map.py
+@@ -5,6 +5,7 @@
+ import numpy as np
+ import tcod
+ 
++from game.entity import Actor
+ from game.tiles import SHROUD, wall
+ 
+ if TYPE_CHECKING:
+@@ -30,7 +31,7 @@ def gamemap(self) -> GameMap:
+     @property
+     def actors(self) -> Iterator[game.entity.Actor]:
+         """Iterate over this maps living actors."""
+-        yield from (entity for entity in self.entities if isinstance(entity, game.entity.Actor) and entity.is_alive)
++        yield from (entity for entity in self.entities if isinstance(entity, Actor) and entity.is_alive)
+ 
+     def get_blocking_entity_at_location(
+         self,
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index d19caf7..082d0cd 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -2,6 +2,7 @@
+ 
+ from typing import TYPE_CHECKING, Optional, Union
+ 
++from tcod import libtcodpy
+ import tcod.event
+ 
+ from game.actions import Action, BumpAction, EscapeAction, WaitAction
+@@ -67,6 +68,9 @@ def on_render(self, console: tcod.console.Console) -> None:
+     def ev_quit(self, event: tcod.event.Quit) -> Optional[Action]:
+         raise SystemExit()
+ 
++    def ev_mousemotion(self, event: tcod.event.MouseMotion) -> None:
++        pass
++
+ 
+ class EventHandler(BaseEventHandler):
+     def __init__(self, engine: game.engine.Engine):
+@@ -104,6 +108,10 @@ def handle_action(self, action: Optional[Action]) -> bool:
+     def on_render(self, console: tcod.console.Console) -> None:
+         self.engine.render(console)
+ 
++    def ev_mousemotion(self, event: tcod.event.MouseMotion) -> None:
++        if self.engine.game_map.in_bounds(int(event.position.x), int(event.position.y)):
++            self.engine.mouse_location = int(event.position.x), int(event.position.y)
++
+ 
+ class MainGameEventHandler(EventHandler):
+     def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+@@ -119,6 +127,8 @@ def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+             action = BumpAction(player, dx, dy)
+         elif key == tcod.event.KeySym.ESCAPE:
+             action = game.actions.EscapeAction(player)
++        elif key == tcod.event.KeySym.V:
++            return HistoryViewer(self.engine)
+         elif key == tcod.event.KeySym.PERIOD and modifiers & (tcod.event.KMOD_LSHIFT | tcod.event.KMOD_RSHIFT):
+             # Wait if user presses '>' (shift + period)
+             action = WaitAction(player)
+@@ -133,3 +143,46 @@ def handle_events(self, event: tcod.event.Event) -> BaseEventHandler:
+         if isinstance(action_or_state, BaseEventHandler):
+             return action_or_state
+         return self  # Keep this handler active
++
++
++class HistoryViewer(EventHandler):
++    """Print the history on a larger window which can be navigated."""
++
++    def __init__(self, engine: game.engine.Engine):
++        super().__init__(engine)
++        self.log_length = len(engine.message_log.messages)
++        self.cursor = self.log_length - 1
++
++    def on_render(self, console: tcod.console.Console) -> None:
++        super().on_render(console)  # Draw the main state as the background.
++
++        log_console = tcod.console.Console(console.width - 6, console.height - 6)
++
++        # Draw a frame with a custom banner title.
++        log_console.draw_frame(0, 0, log_console.width, log_console.height)
++        log_console.print_box(0, 0, log_console.width, 1, "┤Message history├", alignment=libtcodpy.CENTER)
++
++        # Render the message log using the cursor parameter.
++        self.engine.message_log.render_messages(
++            log_console,
++            1,
++            1,
++            log_console.width - 2,
++            log_console.height - 2,
++            self.engine.message_log.messages[: self.cursor + 1],
++        )
++        log_console.blit(console, 3, 3)
++
++    def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
++        # Fancy conditional movement to make it feel right.
++        if event.sym in (tcod.event.KeySym.UP, tcod.event.KeySym.K):
++            self.cursor = max(0, self.cursor - 1)
++        elif event.sym in (tcod.event.KeySym.DOWN, tcod.event.KeySym.J):
++            self.cursor = min(self.log_length - 1, self.cursor + 1)
++        elif event.sym == tcod.event.KeySym.HOME:
++            self.cursor = 0
++        elif event.sym == tcod.event.KeySym.END:
++            self.cursor = self.log_length - 1
++        else:  # Any other key moves back to the main game state.
++            return MainGameEventHandler(self.engine)
++        return None
+diff --git a/game/message_log.py b/game/message_log.py
+new file mode 100644
+index 0000000..9266ff2
+--- /dev/null
++++ b/game/message_log.py
+@@ -0,0 +1,96 @@
++from typing import Generator, List, Reversible, Tuple
++import textwrap
++
++import tcod
++
++from game.color import white
++
++
++class Message:
++    def __init__(self, text: str, fg: Tuple[int, int, int]):
++        self.plain_text = text
++        self.fg = fg
++        self.count = 1
++
++    @property
++    def full_text(self) -> str:
++        """The full text of this message, including the count if necessary."""
++        if self.count > 1:
++            return f"{self.plain_text} (x{self.count})"
++        return self.plain_text
++
++
++class MessageLog:
++    def __init__(self) -> None:
++        self.messages: List[Message] = []
++
++    def add_message(
++        self,
++        text: str,
++        fg: Tuple[int, int, int] = white,
++        *,
++        stack: bool = True,
++    ) -> None:
++        """Add a message to this log.
++
++        `text` is the message text, `fg` is the text color.
++
++        If `stack` is True then the message can stack with a previous message
++        of the same text.
++        """
++        if stack and self.messages and text == self.messages[-1].plain_text:
++            self.messages[-1].count += 1
++        else:
++            self.messages.append(Message(text, fg))
++
++    def render(
++        self,
++        console: tcod.console.Console,
++        x: int,
++        y: int,
++        width: int,
++        height: int,
++    ) -> None:
++        """Render this log over the given area.
++
++        `x`, `y`, `width`, `height` is the rectangular region to render onto
++        the `console`.
++        """
++        self.render_messages(console, x, y, width, height, self.messages)
++
++    @staticmethod
++    def wrap(string: str, width: int) -> Generator[str, None, None]:
++        """Return a wrapped text message.
++
++        Part 8 refactoring: Made public method instead of private.
++        """
++        for line in string.splitlines():  # Handle newlines in messages.
++            yield from textwrap.wrap(
++                line,
++                width,
++                expand_tabs=True,
++            )
++
++    @classmethod
++    def render_messages(
++        cls,
++        console: tcod.console.Console,
++        x: int,
++        y: int,
++        width: int,
++        height: int,
++        messages: Reversible[Message],
++    ) -> None:
++        """Render the messages provided.
++
++        The `messages` are rendered starting at the last message and working
++        backwards.
++        """
++        y_offset = height - 1
++
++        for message in reversed(messages):
++            for line in reversed(list(cls.wrap(message.full_text, width))):
++                console.print(x=x, y=y + y_offset, string=line, fg=message.fg)
++                y_offset -= 1
++                if y_offset < 0:
++                    return  # No more space to print messages.
+diff --git a/game/render_functions.py b/game/render_functions.py
+new file mode 100644
+index 0000000..d123ccc
+--- /dev/null
++++ b/game/render_functions.py
+@@ -0,0 +1,44 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
++import tcod
++
++from game.color import bar_empty, bar_filled, bar_text
++
++if TYPE_CHECKING:
++    import game.engine
++    import game.game_map
++
++
++def get_names_at_location(x: int, y: int, game_map: game.game_map.GameMap) -> str:
++    if not game_map.in_bounds(x, y) or not game_map.visible[x, y]:
++        return ""
++
++    names = ", ".join(entity.name for entity in game_map.entities if entity.x == x and entity.y == y)
++
++    return names.capitalize()
++
++
++def render_bar(
++    console: tcod.console.Console,
++    current_value: int,
++    maximum_value: int,
++    total_width: int,
++) -> None:
++    bar_width = int(float(current_value) / maximum_value * total_width)
++
++    console.draw_rect(x=0, y=45, width=20, height=1, ch=1, bg=bar_empty)
++
++    if bar_width > 0:
++        console.draw_rect(x=0, y=45, width=bar_width, height=1, ch=1, bg=bar_filled)
++
++    console.print(x=1, y=45, string=f"HP: {current_value}/{maximum_value}", fg=bar_text)
++
++
++def render_names_at_mouse_location(console: tcod.console.Console, x: int, y: int, engine: game.engine.Engine) -> None:
++    mouse_x, mouse_y = engine.mouse_location
++
++    names_at_mouse_location = get_names_at_location(x=mouse_x, y=mouse_y, game_map=engine.game_map)
++
++    console.print(x=x, y=y, string=names_at_mouse_location)
+diff --git a/main.py b/main.py
+index 727a50b..b47de71 100755
+--- a/main.py
++++ b/main.py
+@@ -57,6 +57,9 @@ def main() -> None:
+ 
+             # Part 10 refactoring: Handler manages its own state transitions
+             for event in tcod.event.wait():
++                # libtcodpy deprecation: convert mouse events
++                if isinstance(event, tcod.event.MouseMotion):
++                    event = context.convert_event(event)
+                 handler = handler.handle_events(event)
+ 
+ 

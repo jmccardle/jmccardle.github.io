@@ -1,0 +1,184 @@
+diff --git a/game/game_map.py b/game/game_map.py
+index 8dfd233..1679cb0 100644
+--- a/game/game_map.py
++++ b/game/game_map.py
+@@ -5,7 +5,7 @@
+ import numpy as np
+ import tcod
+ 
+-from game.tiles import floor, wall
++from game.tiles import wall
+ 
+ if TYPE_CHECKING:
+     import game.engine
+@@ -17,10 +17,7 @@ def __init__(self, engine: game.engine.Engine, width: int, height: int):
+         self.engine = engine
+         self.width, self.height = width, height
+         self.entities: Set[game.entity.Entity] = set()
+-        self.tiles = np.full((width, height), fill_value=floor, order="F")
+-
+-        # Create a simple test wall
+-        self.tiles[30:33, 22] = wall
++        self.tiles = np.full((width, height), fill_value=wall, order="F")
+ 
+     def get_blocking_entity_at_location(
+         self,
+diff --git a/game/procgen.py b/game/procgen.py
+new file mode 100644
+index 0000000..bb713fb
+--- /dev/null
++++ b/game/procgen.py
+@@ -0,0 +1,100 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, Iterator, List, Tuple
++import random
++
++import tcod
++
++from game.game_map import GameMap
++from game.tiles import floor
++
++if TYPE_CHECKING:
++    import game.engine
++
++
++class RectangularRoom:
++    def __init__(self, x: int, y: int, width: int, height: int):
++        self.x1 = x
++        self.y1 = y
++        self.x2 = x + width
++        self.y2 = y + height
++
++    @property
++    def center(self) -> Tuple[int, int]:
++        center_x = int((self.x1 + self.x2) / 2)
++        center_y = int((self.y1 + self.y2) / 2)
++
++        return center_x, center_y
++
++    @property
++    def inner(self) -> Tuple[slice, slice]:
++        """Return the inner area of this room as a 2D array index."""
++        return slice(self.x1 + 1, self.x2), slice(self.y1 + 1, self.y2)
++
++    def intersects(self, other: RectangularRoom) -> bool:
++        """Return True if this room overlaps with another RectangularRoom."""
++        return self.x1 <= other.x2 and self.x2 >= other.x1 and self.y1 <= other.y2 and self.y2 >= other.y1
++
++
++def tunnel_between(start: Tuple[int, int], end: Tuple[int, int]) -> Iterator[Tuple[int, int]]:
++    """Return an L-shaped tunnel between these two points."""
++    x1, y1 = start
++    x2, y2 = end
++    if random.random() < 0.5:  # 50% chance.
++        # Move horizontally, then vertically.
++        corner_x, corner_y = x2, y1
++    else:
++        # Move vertically, then horizontally.
++        corner_x, corner_y = x1, y2
++
++    # Generate the coordinates for this tunnel.
++    for x, y in tcod.los.bresenham((x1, y1), (corner_x, corner_y)).tolist():
++        yield x, y
++    for x, y in tcod.los.bresenham((corner_x, corner_y), (x2, y2)).tolist():
++        yield x, y
++
++
++def generate_dungeon(
++    max_rooms: int,
++    room_min_size: int,
++    room_max_size: int,
++    map_width: int,
++    map_height: int,
++    engine: game.engine.Engine,
++) -> game.game_map.GameMap:
++    """Generate a new dungeon map."""
++    player = engine.player
++    dungeon = GameMap(engine, map_width, map_height)
++
++    rooms: List[RectangularRoom] = []
++
++    for _ in range(max_rooms):
++        room_width = random.randint(room_min_size, room_max_size)
++        room_height = random.randint(room_min_size, room_max_size)
++
++        x = random.randint(0, dungeon.width - room_width - 1)
++        y = random.randint(0, dungeon.height - room_height - 1)
++
++        # "RectangularRoom" class makes rectangles easier to work with
++        new_room = RectangularRoom(x, y, room_width, room_height)
++
++        # Run through the other rooms and see if they intersect with this one.
++        if any(new_room.intersects(other_room) for other_room in rooms):
++            continue  # This room intersects, so go to the next attempt.
++        # If there are no intersections then the room is valid.
++
++        # Dig out this rooms inner area.
++        dungeon.tiles[new_room.inner] = floor
++
++        if len(rooms) == 0:
++            # The first room, where the player starts.
++            player.place(*new_room.center, dungeon)
++        else:  # All rooms after the first.
++            # Dig out a tunnel between this room and the previous one.
++            for x, y in tunnel_between(rooms[-1].center, new_room.center):
++                dungeon.tiles[x, y] = floor
++
++        # Finally, append the new room to the list.
++        rooms.append(new_room)
++
++    return dungeon
+diff --git a/main.py b/main.py
+index ecd522f..8e67502 100755
+--- a/main.py
++++ b/main.py
+@@ -3,8 +3,9 @@
+ 
+ from game.engine import Engine
+ from game.entity import Entity
+-from game.game_map import GameMap
+ from game.input_handlers import BaseEventHandler, MainGameEventHandler
++from game.procgen import generate_dungeon
++import game.game_map
+ 
+ 
+ def main() -> None:
+@@ -14,22 +15,23 @@ def main() -> None:
+     map_width = 80
+     map_height = 45
+ 
+-    tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
+-
+-    engine = Engine(player=Entity())
++    room_max_size = 10
++    room_min_size = 6
++    max_rooms = 30
+ 
+-    engine.game_map = GameMap(engine, map_width, map_height)
+-
+-    # Create player and place in map
+-    engine.player.place(int(screen_width / 2), int(screen_height / 2), engine.game_map)
+-    engine.player.char = "@"
+-    engine.player.color = (255, 255, 255)
++    tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
+ 
+-    # Create an NPC
+-    npc = Entity()
+-    npc.place(int(screen_width / 2 - 5), int(screen_height / 2), engine.game_map)
+-    npc.char = "@"
+-    npc.color = (255, 255, 0)
++    player = Entity(x=0, y=0, char="@", color=(255, 255, 255))
++    engine = Engine(player=player)
++
++    engine.game_map = generate_dungeon(
++        max_rooms=max_rooms,
++        room_min_size=room_min_size,
++        room_max_size=room_max_size,
++        map_width=map_width,
++        map_height=map_height,
++        engine=engine,
++    )
+ 
+     # Part 10 refactoring: Track handler in main loop
+     handler: BaseEventHandler = MainGameEventHandler(engine)

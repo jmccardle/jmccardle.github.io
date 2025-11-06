@@ -1,0 +1,254 @@
+diff --git a/game/actions.py b/game/actions.py
+index 5b5faa1..78e083f 100644
+--- a/game/actions.py
++++ b/game/actions.py
+@@ -1,6 +1,6 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING
++from typing import TYPE_CHECKING, Optional
+ 
+ if TYPE_CHECKING:
+     import game.engine
+@@ -34,6 +34,11 @@ def perform(self) -> None:
+         raise SystemExit()
+ 
+ 
++class WaitAction(Action):
++    def perform(self) -> None:
++        pass
++
++
+ class ActionWithDirection(Action):
+     def __init__(self, entity: game.entity.Entity, dx: int, dy: int):
+         super().__init__(entity)
+@@ -41,20 +46,51 @@ def __init__(self, entity: game.entity.Entity, dx: int, dy: int):
+         self.dx = dx
+         self.dy = dy
+ 
++    @property
++    def dest_xy(self) -> tuple[int, int]:
++        """Returns this actions destination."""
++        return self.entity.x + self.dx, self.entity.y + self.dy
++
++    @property
++    def blocking_entity(self) -> Optional[game.entity.Entity]:
++        """Return the blocking entity at this actions destination."""
++        return self.engine.game_map.get_blocking_entity_at(*self.dest_xy)
++
++    @property
++    def target_actor(self) -> Optional[game.entity.Entity]:
++        """Return the actor at this actions destination."""
++        return self.engine.game_map.get_blocking_entity_at(*self.dest_xy)
++
+     def perform(self) -> None:
+         raise NotImplementedError()
+ 
+ 
++class MeleeAction(ActionWithDirection):
++    def perform(self) -> None:
++        target = self.blocking_entity
++        if not target:
++            return  # No entity to attack.
++
++        print(f"You kick the {target.name}, much to its annoyance!")
++
++
+ class MovementAction(ActionWithDirection):
+     def perform(self) -> None:
+-        dest_x = self.entity.x + self.dx
+-        dest_y = self.entity.y + self.dy
++        dest_x, dest_y = self.dest_xy
+ 
+         if not self.engine.game_map.in_bounds(dest_x, dest_y):
+             return  # Destination is out of bounds.
+         if not self.engine.game_map.tiles["walkable"][dest_x, dest_y]:
+             return  # Destination is blocked by a tile.
+-        if self.engine.game_map.get_blocking_entity_at_location(dest_x, dest_y):
++        if self.engine.game_map.get_blocking_entity_at(dest_x, dest_y):
+             return  # Destination is blocked by an entity.
+ 
+         self.entity.move(self.dx, self.dy)
++
++
++class BumpAction(ActionWithDirection):
++    def perform(self) -> None:
++        if self.target_actor:
++            return MeleeAction(self.entity, self.dx, self.dy).perform()
++        else:
++            return MovementAction(self.entity, self.dx, self.dy).perform()
+diff --git a/game/engine.py b/game/engine.py
+index 77718cb..a68b23f 100644
+--- a/game/engine.py
++++ b/game/engine.py
+@@ -26,5 +26,9 @@ def update_fov(self) -> None:
+         # If a tile is "visible" it should be added to "explored".
+         self.game_map.explored |= self.game_map.visible
+ 
++    def handle_enemy_turns(self) -> None:
++        for entity in set(self.game_map.entities) - {self.player}:
++            print(f"The {entity.name} wonders when it will get to take a real turn.")
++
+     def render(self, console: tcod.console.Console) -> None:
+         self.game_map.render(console)
+diff --git a/game/entity.py b/game/entity.py
+index 26d2919..4ad350b 100644
+--- a/game/entity.py
++++ b/game/entity.py
+@@ -21,11 +21,15 @@ def __init__(
+         y: int = 0,
+         char: str = "?",
+         color: Tuple[int, int, int] = (255, 255, 255),
++        name: str = "<Unnamed>",
++        blocks_movement: bool = False,
+     ):
+         self.x = x
+         self.y = y
+         self.char = char
+         self.color = color
++        self.name = name
++        self.blocks_movement = blocks_movement
+         if gamemap:
+             # If gamemap isn't provided now then it will be set later.
+             self.gamemap = gamemap
+diff --git a/game/game_map.py b/game/game_map.py
+index a698703..bb845ba 100644
+--- a/game/game_map.py
++++ b/game/game_map.py
+@@ -28,11 +28,15 @@ def get_blocking_entity_at_location(
+         location_y: int,
+     ) -> Optional[game.entity.Entity]:
+         for entity in self.entities:
+-            if entity.x == location_x and entity.y == location_y:
++            if entity.blocks_movement and entity.x == location_x and entity.y == location_y:
+                 return entity
+ 
+         return None
+ 
++    def get_blocking_entity_at(self, x: int, y: int) -> Optional[game.entity.Entity]:
++        """Alias for get_blocking_entity_at_location"""
++        return self.get_blocking_entity_at_location(x, y)
++
+     def in_bounds(self, x: int, y: int) -> bool:
+         """Return True if x and y are inside of the bounds of this map."""
+         return 0 <= x < self.width and 0 <= y < self.height
+diff --git a/game/input_handlers.py b/game/input_handlers.py
+index 8f8e3dc..e54637c 100644
+--- a/game/input_handlers.py
++++ b/game/input_handlers.py
+@@ -4,7 +4,7 @@
+ 
+ import tcod.event
+ 
+-from game.actions import Action, EscapeAction, MovementAction
++from game.actions import Action, BumpAction, EscapeAction, WaitAction
+ 
+ if TYPE_CHECKING:
+     import game.engine
+@@ -91,6 +91,7 @@ def handle_action(self, action: Optional[Action]) -> bool:
+ 
+         action.perform()
+ 
++        self.engine.handle_enemy_turns()
+         self.engine.update_fov()  # Update the FOV before the players next action.
+         return True
+ 
+@@ -103,15 +104,18 @@ def ev_keydown(self, event: tcod.event.KeyDown) -> Optional[ActionOrHandler]:
+         action: Optional[Action] = None
+ 
+         key = event.sym
++        modifiers = event.mod
+ 
+         player = self.engine.player
+ 
+         if key in MOVE_KEYS:
+             dx, dy = MOVE_KEYS[key]
+-            action = MovementAction(player, dx, dy)
+-
++            action = BumpAction(player, dx, dy)
+         elif key == tcod.event.KeySym.ESCAPE:
+             action = EscapeAction(player)
++        elif key == tcod.event.KeySym.PERIOD and modifiers & (tcod.event.Modifier.LSHIFT | tcod.event.Modifier.RSHIFT):
++            # Wait if user presses '>' (shift + period)
++            action = WaitAction(player)
+ 
+         # No valid key was pressed
+         return action
+diff --git a/game/procgen.py b/game/procgen.py
+index bb713fb..97775e3 100644
+--- a/game/procgen.py
++++ b/game/procgen.py
+@@ -5,6 +5,7 @@
+ 
+ import tcod
+ 
++from game.entity import Entity
+ from game.game_map import GameMap
+ from game.tiles import floor
+ 
+@@ -54,12 +55,31 @@ def tunnel_between(start: Tuple[int, int], end: Tuple[int, int]) -> Iterator[Tup
+         yield x, y
+ 
+ 
++def place_entities(
++    room: RectangularRoom,
++    dungeon: game.game_map.GameMap,
++    maximum_monsters: int,
++) -> None:
++    number_of_monsters = random.randint(0, maximum_monsters)
++
++    for _ in range(number_of_monsters):
++        x = random.randint(room.x1 + 1, room.x2 - 1)
++        y = random.randint(room.y1 + 1, room.y2 - 1)
++
++        if not any(entity.x == x and entity.y == y for entity in dungeon.entities):
++            if random.random() < 0.8:
++                Entity(gamemap=dungeon, x=x, y=y, char="o", color=(63, 127, 63), name="Orc", blocks_movement=True)
++            else:
++                Entity(gamemap=dungeon, x=x, y=y, char="T", color=(0, 127, 0), name="Troll", blocks_movement=True)
++
++
+ def generate_dungeon(
+     max_rooms: int,
+     room_min_size: int,
+     room_max_size: int,
+     map_width: int,
+     map_height: int,
++    max_monsters_per_room: int,
+     engine: game.engine.Engine,
+ ) -> game.game_map.GameMap:
+     """Generate a new dungeon map."""
+@@ -94,6 +114,8 @@ def generate_dungeon(
+             for x, y in tunnel_between(rooms[-1].center, new_room.center):
+                 dungeon.tiles[x, y] = floor
+ 
++        place_entities(new_room, dungeon, max_monsters_per_room)
++
+         # Finally, append the new room to the list.
+         rooms.append(new_room)
+ 
+diff --git a/main.py b/main.py
+index f58bc90..8990717 100755
+--- a/main.py
++++ b/main.py
+@@ -18,10 +18,11 @@ def main() -> None:
+     room_max_size = 10
+     room_min_size = 6
+     max_rooms = 30
++    max_monsters_per_room = 2
+ 
+     tileset = tcod.tileset.load_tilesheet("data/dejavu10x10_gs_tc.png", 32, 8, tcod.tileset.CHARMAP_TCOD)
+ 
+-    player = Entity(x=0, y=0, char="@", color=(255, 255, 255))
++    player = Entity(x=0, y=0, char="@", color=(255, 255, 255), name="Player", blocks_movement=True)
+     engine = Engine(player=player)
+ 
+     engine.game_map = generate_dungeon(
+@@ -30,6 +31,7 @@ def main() -> None:
+         room_max_size=room_max_size,
+         map_width=map_width,
+         map_height=map_height,
++        max_monsters_per_room=max_monsters_per_room,
+         engine=engine,
+     )
+     engine.update_fov()
